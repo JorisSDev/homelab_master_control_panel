@@ -37,10 +37,7 @@ export function Home({ state, onOpen }: { state: ViewState; onOpen: (section: Se
             {running.map((row) => (
               <tr key={row.id}>
                 <td data-label="Guest">
-                  <span className="unit">
-                    {row.kind === "vm" ? "VM" : "CT"} {row.id}
-                  </span>
-                  <GuestName name={row.name} url={row.url} />
+                  <GuestIdentity row={row} />
                 </td>
                 <td data-label="Services">{joined(row.services)}</td>
                 <td className="num" data-label="CPU">
@@ -83,8 +80,7 @@ export function UpdateJob({
   onGuestActive: (id: string) => void;
 }) {
   return (
-    <section>
-      <h2>Update</h2>
+    <section aria-label="Update">
       <UpdateActions job={job} onPackages={onPackages} onGuests={onGuests} />
       <p className="quiet">Next run {job.next}</p>
       <LiveJob job={job} />
@@ -100,9 +96,7 @@ export function UpdateJob({
 
 export function ScanJob({ job }: { job: JobView }) {
   return (
-    <section>
-      <h2>Scan</h2>
-      <p className="lede">{job.purpose}</p>
+    <section aria-label="Scan">
       <div className="status-row">
         <p className={job.idle ? "status" : "status live"}>
           <FadeText text={job.status} />
@@ -113,6 +107,7 @@ export function ScanJob({ job }: { job: JobView }) {
         <FadeText text={job.detail} />
       </p>
       <p className="quiet">Next run {job.next}</p>
+      <p className="lede">{job.purpose}</p>
       {job.started ? <p className="quiet">Started {job.started}</p> : null}
       <Timeline job={job} />
       {job.waiting ? <p>The job has started. The first check will appear here.</p> : null}
@@ -338,11 +333,10 @@ export function Containers({ services }: { services: ViewState["services"] }) {
     ? ordered.filter((row) => `${row.name} ${row.id} ${row.services.join(" ")}`.toLowerCase().includes(needle))
     : ordered;
   return (
-    <section>
-      <h2>Containers</h2>
-      <p className="lede">{services.purpose}</p>
+    <section aria-label="Containers">
       <p className="status">{services.status}</p>
       <p className="detail">{services.summary}</p>
+      <p className="lede">{services.purpose}</p>
       {services.rows.length === 0 ? (
         <p className="quiet">No guests are configured.</p>
       ) : (
@@ -404,15 +398,12 @@ export function Containers({ services }: { services: ViewState["services"] }) {
 
 export function Storage({ storage }: { storage: ViewState["storage"] }) {
   return (
-    <section>
-      <h2>Storage</h2>
-      <p className="lede">{storage.purpose}</p>
+    <section aria-label="Storage">
       <p className="status">{storage.status}</p>
       <p className="detail">{storage.summary}</p>
-      {storage.rows.length === 0 ? (
-        <p className="quiet">This copy cannot read the disks.</p>
-      ) : (
-        <table>
+      <p className="lede">{storage.purpose}</p>
+      {storage.rows.length > 0 ? (
+        <table className="stack">
           <thead>
             <tr>
               <th>Where</th>
@@ -423,24 +414,36 @@ export function Storage({ storage }: { storage: ViewState["storage"] }) {
           <tbody>
             {storage.rows.map((row) => (
               <tr key={`${row.kind}-${row.label}`}>
-                <td>
+                <td data-label="Where">
                   <span className="unit">{row.label}</span>
                   {row.detail ? <span className="note">{row.detail}</span> : null}
                 </td>
-                <td className="num">{row.free && row.total ? `${row.free} of ${row.total}` : row.status === "Not mounted" ? "—" : "unknown"}</td>
-                <td className={row.low ? "bad" : undefined}>{row.status}</td>
+                <td className="num" data-label="Free">{row.free && row.total ? `${row.free} of ${row.total}` : row.status === "Not mounted" ? "—" : "unknown"}</td>
+                <td className={row.low ? "bad" : undefined} data-label="Status">{row.status}</td>
               </tr>
             ))}
           </tbody>
         </table>
-      )}
+      ) : null}
     </section>
+  );
+}
+
+function GuestIdentity({ row, active = false }: { row: ServiceRow; active?: boolean }) {
+  const kind = row.kind === "vm" ? "VM" : "CT";
+  return (
+    <span className="guest">
+      <span className="unit">
+        {kind} {row.id}
+      </span>
+      {active ? <span className="guest-name">{row.name} is updating</span> : <GuestName name={row.name} url={row.url} />}
+    </span>
   );
 }
 
 function GuestName({ name, url }: { name: string; url: string }) {
   if (!url) {
-    return <span className="unit">{name}</span>;
+    return <span className="guest-name">{name}</span>;
   }
   return (
     <a href={url} target="_blank" rel="noopener noreferrer">
@@ -487,10 +490,7 @@ function GuestUpdateTable({
           return (
             <tr key={row.id} className={guestTint(update)}>
               <td className="name" data-label="Guest">
-                <span className="unit">
-                  {row.kind === "vm" ? "VM" : "CT"} {row.id}
-                </span>
-                {active ? <span className="unit">{row.name} is updating</span> : <GuestName name={row.name} url={row.url} />}
+                <GuestIdentity row={row} active={active} />
               </td>
               <td data-label="Running">{joined(row.services)}</td>
               <td className={update?.error ? "bad" : undefined} data-label="Waiting">
@@ -509,7 +509,7 @@ function GuestUpdateTable({
 
 function waitingText(checked: boolean, row: GuestUpdateRow | undefined) {
   if (!checked) {
-    return "Not checked yet";
+    return "Not checked";
   }
   if (!row) {
     return "—";
@@ -594,7 +594,7 @@ function PackageTable({ packages }: { packages: Packages }) {
     return <p className="bad">{packages.error}</p>;
   }
   if (!packages.checked) {
-    return <p className="quiet">Not checked yet.</p>;
+    return <p className="quiet">Not checked.</p>;
   }
   if (upgrades.length === 0) {
     return <p className="quiet">Nothing is waiting.</p>;
@@ -690,8 +690,7 @@ export function PanelPage({ panel, onSignOut }: { panel: ViewState["panel"]; onS
   }
 
   return (
-    <section>
-      <h2>Panel</h2>
+    <section aria-label="Panel">
       <p className="lede">This copy of the panel, and the latest published release.</p>
       <dl className="metrics">
         <div>

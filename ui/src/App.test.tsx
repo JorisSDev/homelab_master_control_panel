@@ -207,7 +207,7 @@ describe("maintenance page", () => {
     expect(html.indexOf("Check for updates")).toBeLessThan(html.indexOf("Update all"));
     expect(html).toContain("Update all");
     expect(html).toContain("Check for updates");
-    expect(html).toContain("Not checked yet.");
+    expect(html).toContain("Not checked.");
     expect(html).toContain("Next run");
     expect(html).not.toContain("Start the update");
     expect(html).not.toContain("restarts playback");
@@ -217,7 +217,7 @@ describe("maintenance page", () => {
     expect(html).toContain("Guest 201 · Packages");
     expect(html).toContain("=== homelab-update start ===");
     expect(html).toContain("Host packages");
-    expect(html).toContain("Not checked yet");
+    expect(html).toContain("Not checked");
     const guest = html.slice(html.indexOf("CT 201"), html.indexOf("VM 216"));
     const vm = html.slice(html.indexOf("VM 216"), html.indexOf("Host packages"));
     expect(guest).toContain(">Update<");

@@ -3,7 +3,7 @@ import type { Run } from "../types";
 export function Runs({ title, runs }: { title: string; runs: Run[] }) {
   return (
     <>
-      <h3>{title}</h3>
+      <h2>{title}</h2>
       {runs.length === 0 ? (
         <p className="quiet">No report yet.</p>
       ) : (
