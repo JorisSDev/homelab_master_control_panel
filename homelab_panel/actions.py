@@ -1,7 +1,7 @@
-"""Start a maintenance job. The update starts only when the phrase matches.
+"""Start a maintenance job.
 
-The phrase is a confirmation that names the restart. It is not a password.
-Nothing else on the host is started or stopped.
+The update starts only after the page sends an explicit confirmation. Nothing
+else on the host is started or stopped.
 """
 
 from __future__ import annotations
@@ -29,16 +29,14 @@ def unit_name(config, kind):
     return named
 
 
-def start_action(config, kind, confirmation, snapshot, starter):
+def start_action(config, kind, confirmed, snapshot, starter):
     if snapshot.get("scan_active") or snapshot.get("update_active"):
-        return 400, {"error": "A maintenance job is already running."}, False
+        return 400, {"error": "A job is already running."}, False
     unit = unit_name(config, kind)
     if not unit:
         return 400, {"error": "The job is not configured."}, False
-    if kind == "update":
-        phrase = config.get("update_confirmation") or ""
-        if not phrase or confirmation != phrase:
-            return 400, {"error": "The confirmation does not match."}, False
+    if kind == "update" and confirmed is not True:
+        return 400, {"error": "The update was not confirmed."}, False
     code = starter(["systemctl", "start", "--no-block", unit])
     if code != 0:
         return 502, {"error": "The job did not start."}, False

@@ -2,63 +2,43 @@ import { useState } from "react";
 import { FadeText } from "./FadeText";
 import type { Now as NowState } from "../types";
 
-function currentLine(step: string, guest: string, elapsed: string) {
-  const place = `${step} on ${guest}`;
-  return elapsed ? `${place}, ${elapsed} elapsed.` : `${place}.`;
-}
-
-export function Now({ now, confirmation }: { now: NowState; confirmation: string }) {
+export function Now({ now }: { now: NowState }) {
   return (
     <section className="now">
       <h2>Now</h2>
-      {now.idle ? (
-        <p>
-          <FadeText text={now.text} />
+      <div className="status-row">
+        <p className={now.idle ? "status" : "status live"}>
+          <FadeText text={now.status} />
         </p>
-      ) : (
-        <>
-          {now.jobs.map((job) => (
-            <p key={job.label}>
-              <FadeText
-                text={
-                  job.elapsed
-                    ? `${job.label} since ${job.since}, ${job.elapsed} elapsed.`
-                    : `${job.label} since ${job.since}.`
-                }
-              />
-            </p>
+        {now.jobs[0]?.elapsed ? <p className="elapsed">{now.jobs[0].elapsed}</p> : null}
+      </div>
+      <p className="detail">
+        <FadeText text={now.detail} />
+      </p>
+      {now.jobs[0]?.started ? <p className="quiet">Started {now.jobs[0].started}</p> : null}
+      {now.timeline.length > 0 ? (
+        <ol className="timeline">
+          {now.timeline.map((item, index) => (
+            <li key={`${item.text}-${index}`} className={item.current ? "step-current" : undefined} aria-current={item.current ? "step" : undefined}>
+              <span>{item.text}</span>
+              {item.current ? <span className="badge">Now</span> : null}
+            </li>
           ))}
-          {now.timeline.length > 0 ? (
-            <ol className="timeline">
-              {now.timeline.map((item, index) =>
-                item.current ? (
-                  <li key={`${item.text}-${index}`} className="step-current" aria-current="step">
-                    <FadeText text={currentLine(item.step, item.guest, item.elapsed)} />
-                  </li>
-                ) : (
-                  <li key={`${item.text}-${index}`}>{item.text}</li>
-                ),
-              )}
-            </ol>
-          ) : null}
-          {now.waiting ? <p>Waiting for the first step mark in this run.</p> : null}
-          {now.lock ? <p className="quiet">{now.lock}</p> : null}
-        </>
-      )}
-      <Actions idle={now.idle} confirmation={confirmation} />
+        </ol>
+      ) : null}
+      {now.waiting ? <p>The job has started. The first check will appear here.</p> : null}
+      {now.lock ? <p className="quiet">{now.lock}</p> : null}
+      <Actions idle={now.idle} />
     </section>
   );
 }
 
-function Actions({ idle, confirmation }: { idle: boolean; confirmation: string }) {
-  const [typed, setTyped] = useState("");
+function Actions({ idle }: { idle: boolean }) {
+  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const locked = !idle || busy;
-  const phrase = confirmation.trim();
-  const updateReady = phrase !== "" && typed.trim() === phrase;
 
-  async function post(path: string, body: Record<string, string>) {
+  async function post(path: string, body: Record<string, boolean>) {
     setBusy(true);
     setMessage("");
     try {
@@ -68,12 +48,16 @@ function Actions({ idle, confirmation }: { idle: boolean; confirmation: string }
         body: JSON.stringify(body),
       });
       const payload = (await response.json().catch(() => ({}))) as { error?: string; started?: string };
+      if (response.status === 401) {
+        window.location.reload();
+        return;
+      }
       if (!response.ok) {
         setMessage(payload.error || "The job did not start.");
         return;
       }
-      setTyped("");
-      setMessage(payload.started === "update" ? "The update is starting." : "The scan is starting.");
+      setConfirming(false);
+      setMessage(payload.started === "update" ? "Starting the update." : "Starting the scan.");
     } catch {
       setMessage("The page could not start the job.");
     } finally {
@@ -81,39 +65,36 @@ function Actions({ idle, confirmation }: { idle: boolean; confirmation: string }
     }
   }
 
+  if (!idle) {
+    return message ? <p className="quiet">{message}</p> : null;
+  }
+
+  if (confirming) {
+    return (
+      <div className="confirm">
+        <p>This installs packages, recreates the Compose apps, and restarts playback.</p>
+        <div className="actions">
+          <button type="button" disabled={busy} onClick={() => void post("/api/actions/update", { confirm: true })}>
+            Start the update
+          </button>
+          <button type="button" className="quiet-button" disabled={busy} onClick={() => setConfirming(false)}>
+            Cancel
+          </button>
+        </div>
+        {message ? <p className="bad">{message}</p> : null}
+      </div>
+    );
+  }
+
   return (
     <div className="actions">
-      <button type="button" disabled={locked} onClick={() => void post("/api/actions/scan", {})}>
+      <button type="button" disabled={busy} onClick={() => void post("/api/actions/scan", {})}>
         Run the scan
       </button>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (updateReady && !locked) {
-            void post("/api/actions/update", { confirmation: typed.trim() });
-          }
-        }}
-      >
-        <label>
-          Restart confirmation
-          <input
-            type="text"
-            value={typed}
-            placeholder={phrase || "not configured"}
-            disabled={locked || phrase === ""}
-            onChange={(event) => setTyped(event.target.value)}
-          />
-        </label>
-        <button type="submit" disabled={locked || !updateReady}>
-          Run the update
-        </button>
-      </form>
-      <p className="quiet">
-        {phrase
-          ? `The update starts only after you type “${phrase}”.`
-          : "The update confirmation is not configured."}
-      </p>
-      {message ? <p className={message.endsWith("starting.") ? "ok" : "bad"}>{message}</p> : null}
+      <button type="button" className="quiet-button" disabled={busy} onClick={() => setConfirming(true)}>
+        Run the update
+      </button>
+      {message ? <p className={message.startsWith("Starting") ? "ok" : "bad"}>{message}</p> : null}
     </div>
   );
 }

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { History } from "./components/History";
+import { Login } from "./components/Login";
+import { Logo } from "./components/Logo";
 import { Now } from "./components/Now";
 import { Schedule } from "./components/Schedule";
-import { Unfinished } from "./components/Unfinished";
 import type { ViewState } from "./types";
 
 type Props = {
@@ -12,7 +13,10 @@ type Props = {
 
 export function App({ initial = null, live = true }: Props) {
   const [state, setState] = useState<ViewState | null>(initial);
+  const [authed, setAuthed] = useState(initial != null);
   const [error, setError] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [signingIn, setSigningIn] = useState(false);
 
   useEffect(() => {
     if (!live) {
@@ -24,12 +28,21 @@ export function App({ initial = null, live = true }: Props) {
     async function tick() {
       try {
         const response = await fetch("/api/state", { cache: "no-store" });
+        if (response.status === 401) {
+          if (!stop) {
+            setAuthed(false);
+            setState(null);
+            setError("");
+          }
+          return;
+        }
         if (!response.ok) {
           throw new Error(String(response.status));
         }
         const next = (await response.json()) as ViewState;
         if (!stop) {
           setState(next);
+          setAuthed(true);
           setError("");
           const seconds = next.now.idle ? Math.max(1, next.refresh_seconds || 10) : 2;
           timer = window.setTimeout(tick, seconds * 1000);
@@ -47,22 +60,58 @@ export function App({ initial = null, live = true }: Props) {
       stop = true;
       window.clearTimeout(timer);
     };
-  }, [live]);
+  }, [live, authed]);
+
+  async function signIn(password: string) {
+    setSigningIn(true);
+    setLoginError("");
+    try {
+      const response = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        setLoginError(payload.error || "Sign in failed.");
+        return;
+      }
+      setAuthed(true);
+    } catch {
+      setLoginError("The page could not be reached.");
+    } finally {
+      setSigningIn(false);
+    }
+  }
+
+  async function signOut() {
+    await fetch("/api/logout", { method: "POST" });
+    setState(null);
+    setAuthed(false);
+  }
+
+  if (!authed) {
+    return <Login error={loginError} busy={signingIn} onSubmit={(password) => void signIn(password)} />;
+  }
 
   return (
     <main className="wrap">
-      <h1>Maintenance</h1>
-      <p className="lede">
-        What the host is about to do to the guests, and what it already did. This page can start the
-        scan, and it can start the update after you name the restart.
-      </p>
+      <header className="top">
+        <Logo />
+        <div>
+          <h1>Master control panel</h1>
+          <p className="quiet">What the host is doing, and what it already did.</p>
+        </div>
+        <button type="button" className="quiet-button" onClick={() => void signOut()}>
+          Sign out
+        </button>
+      </header>
       {error ? <p className="bad">{error}</p> : null}
       {state ? (
         <>
-          <Now now={state.now} confirmation={state.actions.update_confirmation} />
+          <Now now={state.now} />
           <Schedule schedule={state.schedule} />
           <History history={state.history} />
-          <Unfinished unfinished={state.unfinished} />
         </>
       ) : (
         <p className="quiet">Reading the host.</p>

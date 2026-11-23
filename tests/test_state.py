@@ -89,22 +89,6 @@ class StateTests(unittest.TestCase):
         self.assertEqual(parsed, {"version": "4.5.6-example", "claimed": "1"})
         self.assertNotIn("machineIdentifier", json.dumps(parsed))
 
-    def test_claimed_server_has_no_sign_in_sentence(self):
-        state = build_state(CONFIG, snapshot())
-        encoded = json.dumps(state)
-        self.assertNotIn("machineIdentifier", encoded)
-        self.assertNotIn("secret-id", encoded)
-        self.assertNotIn("sign-in", state["unfinished"]["facts"][0])
-        self.assertIn("4.5.6-example", state["unfinished"]["facts"][0])
-        self.assertIn("newer than 1.2.3", state["unfinished"]["facts"][0])
-
-    def test_unclaimed_server_asks_for_sign_in(self):
-        state = build_state(CONFIG, snapshot(plex_xml=UNCLAIMED))
-        fact = state["unfinished"]["facts"][0]
-        self.assertIn("http://10.0.0.30:32400/web", fact)
-        self.assertIn("older than 1.2.3", fact)
-        self.assertNotIn("machineIdentifier", json.dumps(state))
-
     def test_xml_declaration_is_not_the_server_version(self):
         xml = '<?xml version="1.0"?><MediaContainer claimed="1" version="9.9.9"/>'
         self.assertEqual(parse_identity(xml)["version"], "9.9.9")
@@ -124,13 +108,13 @@ class StateTests(unittest.TestCase):
         scan = state["history"]["scan"]
         self.assertEqual(scan[0]["result"], "clean")
         self.assertIn("35 min", scan[0]["heading"])
-        self.assertEqual(scan[0]["steps"], ["-- 201 clamav --"])
+        self.assertEqual(scan[0]["steps"], ["Guest 201 · Malware scan"])
         self.assertIn("=== homelab-scan start 2026-01-02T04:05:00+00:00 ===", scan[0]["transcript"])
         self.assertEqual(scan[1]["result"], "host example finding")
         self.assertNotIn("min", scan[1]["heading"])
         self.assertIn("dry run", state["history"]["update"][0]["heading"])
-        self.assertIn("7 Debian security", state["unfinished"]["facts"][-1])
-        self.assertIn("4 other host packages", state["unfinished"]["facts"][-1])
+        self.assertNotIn("unfinished", state)
+        self.assertNotIn("machineIdentifier", json.dumps(state))
 
     def test_running_job_shows_step_and_elapsed(self):
         state = build_state(
@@ -146,12 +130,16 @@ class StateTests(unittest.TestCase):
             now=datetime.datetime.fromtimestamp(1_767_000_300, datetime.timezone.utc),
         )
         self.assertFalse(state["now"]["idle"])
+        self.assertEqual(state["now"]["status"], "Scan running")
+        self.assertEqual(state["now"]["detail"], "Malware scan on guest 201")
         self.assertEqual(state["now"]["step"], {"step": "clamav", "guest": "201"})
         self.assertEqual(state["now"]["jobs"][0]["elapsed"], "5 min")
+        self.assertEqual(state["now"]["jobs"][0]["started"], "04:05")
+        self.assertEqual(state["now"]["timeline"][0]["text"], "Guest 201 · Malware scan")
         self.assertEqual(state["now"]["timeline"][0]["current"], True)
         self.assertEqual(state["now"]["timeline"][0]["guest"], "201")
         self.assertEqual(state["now"]["timeline"][0]["elapsed"], "5 min")
-        self.assertIn("maintenance lock", state["now"]["lock"])
+        self.assertIn("update waits", state["now"]["lock"])
 
     def test_open_run_marks_only_the_current_step(self):
         log = "=== homelab-scan start 2026-01-02T04:05:00+00:00 ===\n-- CT 201 leftovers --\n"
@@ -173,27 +161,14 @@ class StateTests(unittest.TestCase):
             now=datetime.datetime.fromtimestamp(1_767_000_300, datetime.timezone.utc),
         )
         marked = [(item["text"], item["current"]) for item in state["now"]["timeline"]]
-        self.assertEqual(marked, [("-- 201 leftovers --", False), ("-- 201 clamav --", True)])
-        self.assertEqual(state["actions"]["update_confirmation"], "")
+        self.assertEqual(
+            marked,
+            [("Guest 201 · Leftover files", False), ("Guest 201 · Malware scan", True)],
+        )
 
     def test_idle_copy_and_guest_rows(self):
         state = build_state(CONFIG, snapshot())
         self.assertTrue(state["now"]["idle"])
+        self.assertEqual(state["now"]["status"], "Idle")
         self.assertEqual(state["now"]["timeline"], [])
         self.assertIn("Nothing is running", state["now"]["text"])
-        media = state["unfinished"]["guests"][0]
-        self.assertEqual(media["kind"], "apt")
-        self.assertEqual(media["href"], "http://10.0.0.30:32400/web")
-        self.assertEqual(media["last_update"], "seen in dry run")
-        self.assertEqual(media["last_scan"], "clean")
-        self.assertEqual(state["unfinished"]["guests"][1]["kind"], "compose")
-        self.assertIn("firewall is off", state["unfinished"]["facts"][2])
-        self.assertIn("no vzdump job", state["unfinished"]["facts"][3])
-
-    def test_firewall_and_backup_changes_are_visible(self):
-        state = build_state(
-            CONFIG,
-            snapshot(firewall_text="Status: enabled/running", vzdump_text="0 3 * * * root vzdump 201\n"),
-        )
-        self.assertIn("no longer reporting disabled", state["unfinished"]["facts"][2])
-        self.assertIn("backup schedule is present", state["unfinished"]["facts"][3])

@@ -5,10 +5,11 @@ import type { ViewState } from "./types";
 
 const fixture: ViewState = {
   refresh_seconds: 10,
-  actions: { update_confirmation: "restart playback" },
   now: {
     idle: true,
-    text: "Nothing is running. The next scan and the next update are in the schedule below.",
+    status: "Idle",
+    detail: "Nothing is running. The next scan and the next update are in the schedule.",
+    text: "Nothing is running. The next scan and the next update are in the schedule.",
     jobs: [],
     step: null,
     timeline: [],
@@ -32,7 +33,7 @@ const fixture: ViewState = {
         heading: "2026-01-02T03:04:05+00:00 · dry run · under a minute",
         ok: true,
         result: "dry run",
-        steps: ["-- CT 201 apt --"],
+        steps: ["Guest 201 · Packages"],
         transcript: "=== homelab-update start ===",
         hidden_lines: 0,
       },
@@ -42,76 +43,63 @@ const fixture: ViewState = {
         heading: "2026-01-02T04:05:00+00:00 · 35 min",
         ok: true,
         result: "clean",
-        steps: ["-- 201 clamav --"],
+        steps: ["Guest 201 · Malware scan"],
         transcript: "scan clean",
         hidden_lines: 2,
-      },
-    ],
-  },
-  unfinished: {
-    facts: [
-      "Plex on CT 201 is 9.9.9. That is newer than 1.0.0.",
-      "One TCP port stays the only intentional WAN forward.",
-    ],
-    guests: [
-      {
-        id: "201",
-        name: "media",
-        address: "10.0.0.30",
-        kind: "apt",
-        last_update: "seen in dry run",
-        last_scan: "clean",
-        href: "http://10.0.0.30:32400/web",
       },
     ],
   },
 };
 
 describe("maintenance page", () => {
-  it("renders the four sections in order without controls", () => {
+  it("renders the panel without the unfinished section", () => {
     const html = renderToStaticMarkup(<App initial={fixture} live={false} />);
     const now = html.indexOf(">Now<");
     const schedule = html.indexOf(">Schedule<");
     const history = html.indexOf(">History<");
-    const unfinished = html.indexOf(">Unfinished<");
+    expect(html).toContain("Master control panel");
     expect(now).toBeGreaterThan(-1);
     expect(now).toBeLessThan(schedule);
     expect(schedule).toBeLessThan(history);
-    expect(history).toBeLessThan(unfinished);
+    expect(html).not.toContain("Unfinished");
     expect(html).toContain("Host housekeeping");
     expect(html).toContain("Transcript");
-    expect(html).toContain("can start the scan");
     expect(html).toContain("Run the scan");
     expect(html).toContain("Run the update");
-    expect(html).toContain("restart playback");
+    expect(html).not.toContain("restart playback");
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
     const transcript = html.indexOf("Transcript");
     expect(transcript).toBeGreaterThan(-1);
-    expect(transcript).toBeLessThan(html.indexOf("-- CT 201 apt --"));
+    expect(transcript).toBeLessThan(html.indexOf("Guest 201 · Packages"));
   });
 
-  it("marks the current step and disables both actions while a job runs", () => {
+  it("shows the running scan in plain language and hides the start buttons", () => {
     const running: ViewState = {
       ...fixture,
       now: {
         idle: false,
+        status: "Scan running",
+        detail: "Malware scan on guest 201",
         text: "",
-        jobs: [{ label: "daily scan", since: "Thu 02 Jan 04:05", elapsed: "5 min" }],
+        jobs: [{ label: "daily scan", since: "Thu 02 Jan 04:05", started: "04:05", elapsed: "5 min" }],
         step: { step: "clamav", guest: "201" },
         timeline: [
-          { text: "-- 201 leftovers --", current: false, guest: "", step: "", elapsed: "" },
-          { text: "-- 201 clamav --", current: true, guest: "201", step: "clamav", elapsed: "5 min" },
+          { text: "Guest 201 · Leftover files", current: false, guest: "", step: "", elapsed: "" },
+          { text: "Guest 201 · Malware scan", current: true, guest: "201", step: "clamav", elapsed: "5 min" },
         ],
         waiting: false,
-        lock: "This job holds the maintenance lock, so the other job waits until it finishes.",
+        lock: "The scan is using the maintenance lock. The update waits until it finishes.",
       },
     };
     const html = renderToStaticMarkup(<App initial={running} live={false} />);
+    expect(html).toContain("Scan running");
+    expect(html).toContain("Malware scan on guest 201");
+    expect(html).toContain("5 min");
     expect(html).toContain("step-current");
-    expect(html).toContain("clamav on 201, 5 min elapsed.");
-    expect(html).toContain("-- 201 leftovers --");
-    expect(html).toContain("disabled");
+    expect(html).toContain(">Now<");
+    expect(html).not.toContain("Run the scan");
+    expect(html).not.toContain("restart playback");
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
   });

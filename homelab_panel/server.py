@@ -1,7 +1,7 @@
 """HTTP API and static file server.
 
-GET reads the page. POST starts the scan, or the update when the confirmation
-matches. Every other POST is refused.
+GET reads the page after sign-in. POST signs in, signs out, starts the scan,
+or starts the update after it is confirmed. Every other POST is refused.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from homelab_panel.actions import start_action, start_unit
+from homelab_panel.auth import clear_cookie, new_session, session_token, set_cookie, verify_password
 from homelab_panel.collect import collect_snapshot
 from homelab_panel.config import ConfigError, load_config
 from homelab_panel.state import build_state
@@ -34,6 +35,9 @@ class Panel:
         self._lock = threading.Lock()
         self._at = 0.0
         self._state = None
+        self._sessions = {}
+        self._failures = 0
+        self._locked_until = 0.0
 
     def _ttl(self):
         if self._state and not self._state["now"]["idle"]:
@@ -48,11 +52,21 @@ class Panel:
                 self._at = now
             return self._state
 
-    def handle(self, method, path, body=b""):
+    def handle(self, method, path, body=b"", headers=None):
+        headers = headers or {}
         clean = path.split("?", 1)[0]
-        if method == "POST" and clean in ("/api/actions/scan", "/api/actions/update"):
-            return self._action(clean, body)
-        if method != "GET":
+        if method == "POST" and clean == "/api/login":
+            return self._login(body)
+        if method == "POST" and clean == "/api/logout":
+            return self._logout()
+        if clean.startswith("/api/"):
+            if not self._authorized(headers):
+                return self._json(401, {"error": "Sign in is required."})
+            if method == "POST" and clean in ("/api/actions/scan", "/api/actions/update"):
+                return self._action(clean, body)
+            if method != "GET" or clean != "/api/state":
+                return 405, {"Allow": "GET"}, b""
+        elif method != "GET":
             return 405, {"Allow": "GET"}, b""
         if clean == "/api/state":
             body = json.dumps(self.state()).encode()
@@ -71,14 +85,11 @@ class Panel:
         payload = _payload(body)
         if payload is None:
             return self._json(400, {"error": "The request could not be read."})
-        confirmation = payload.get("confirmation") or ""
-        if not isinstance(confirmation, str):
-            confirmation = ""
         kind = "scan" if path.endswith("/scan") else "update"
         status, result, started = start_action(
             self.config,
             kind,
-            confirmation.strip(),
+            payload.get("confirm") is True,
             self.provider(),
             self.starter,
         )
@@ -88,10 +99,50 @@ class Panel:
                 self._at = 0.0
         return self._json(status, result)
 
-    def _json(self, status, payload):
+    def _json(self, status, payload, extra=None):
         body = json.dumps(payload).encode()
         headers = {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"}
+        if extra:
+            headers.update(extra)
         return status, headers, body
+
+    def _authorized(self, headers):
+        token = session_token(headers.get("Cookie", ""))
+        if not token:
+            return False
+        now = time.monotonic()
+        with self._lock:
+            expiry = self._sessions.get(token)
+            if not expiry or expiry < now:
+                self._sessions.pop(token, None)
+                return False
+            return True
+
+    def _login(self, body):
+        now = time.monotonic()
+        if now < self._locked_until:
+            return self._json(429, {"error": "Too many attempts. Wait a minute."})
+        payload = _payload(body)
+        password = ""
+        if isinstance(payload, dict) and isinstance(payload.get("password"), str):
+            password = payload["password"]
+        if not verify_password(password, self.config.get("password_hash") or ""):
+            self._failures += 1
+            if self._failures >= 5:
+                self._locked_until = now + 60
+                self._failures = 0
+            return self._json(401, {"error": "The password does not match."})
+        self._failures = 0
+        token = new_session()
+        with self._lock:
+            self._sessions[token] = now + 12 * 60 * 60
+        return 204, {
+            "Cache-Control": "no-store",
+            "Set-Cookie": set_cookie(token),
+        }, b""
+
+    def _logout(self):
+        return 204, {"Cache-Control": "no-store", "Set-Cookie": clear_cookie()}, b""
 
 
 class DirectoryAssets:
@@ -159,7 +210,7 @@ def assets_from_runtime():
 def make_handler(panel):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            self._send(*panel.handle("GET", self.path))
+            self._send(*panel.handle("GET", self.path, headers=self._headers()))
 
         def do_POST(self):
             raw = self.headers.get("Content-Length") or "0"
@@ -171,7 +222,10 @@ def make_handler(panel):
                 self._send(*panel._json(400, {"error": "The request is too large."}))
                 return
             body = self.rfile.read(length) if length else b""
-            self._send(*panel.handle("POST", self.path, body))
+            self._send(*panel.handle("POST", self.path, body, self._headers()))
+
+        def _headers(self):
+            return {"Cookie": self.headers.get("Cookie", "")}
 
         def _send(self, status, headers, body):
             self.send_response(status)
@@ -214,6 +268,8 @@ def main(argv=None):
         config = load_config(args.config)
     except ConfigError as exc:
         raise SystemExit(str(exc)) from exc
+    if not config.get("password_hash"):
+        raise SystemExit("config needs a password_hash")
     serve(config)
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
 import subprocess
@@ -35,11 +36,6 @@ def collect_snapshot(config, runner=run, reader=read_text):
     scan_active, scan_since, scan_started = _service(runner, scan_service)
     update_active, update_since, update_started = _service(runner, update_service)
     logs = config.get("logs") or {}
-    plex = config.get("plex") or {}
-    identity_url = plex.get("identity_url") or ""
-    plex_xml = ""
-    if identity_url:
-        plex_xml = runner(["curl", "-sS", "--max-time", "3", identity_url])
     return {
         "timers": timers,
         "scan_active": scan_active,
@@ -51,73 +47,47 @@ def collect_snapshot(config, runner=run, reader=read_text):
         "update_logs": [reader(path) for path in (logs.get("update") or [])],
         "scan_logs": [reader(path) for path in (logs.get("scan") or [])],
         "event_logs": [reader(path) for path in (config.get("events") or [])],
-        "plex_xml": plex_xml,
-        "firewall_text": runner(["pve-firewall", "status"]),
-        "vzdump_text": reader(config.get("vzdump_cron") or ""),
         "unattended_text": runner(["dpkg-query", "-W", "-f", "${Status}", "unattended-upgrades"]),
-        "guests": _guests(config, runner),
     }
 
 
 def _service(runner, unit):
-    state = runner(["systemctl", "show", unit, "-p", "ActiveState", "--value"]).strip()
-    since = runner(["systemctl", "show", unit, "-p", "ExecMainStartTimestamp", "--value"]).strip()
-    started = runner(["systemctl", "show", unit, "-p", "ActiveEnterTimestampUSec", "--value"]).strip()
-    try:
-        started_us = int(started or "0")
-    except ValueError:
-        started_us = 0
-    return state == "activating", since, started_us
-
-
-def _guests(config, runner):
-    rows = []
-    for line in runner(["pct", "list"]).splitlines()[1:]:
-        parts = line.split()
-        if len(parts) < 2 or not parts[0].isdigit():
+    raw = runner(
+        [
+            "systemctl",
+            "show",
+            unit,
+            "-p",
+            "ActiveState",
+            "-p",
+            "ExecMainStartTimestamp",
+            "-p",
+            "ExecMainStartTimestampUSec",
+        ]
+    )
+    values = {}
+    for line in raw.splitlines():
+        if "=" not in line:
             continue
-        guest_id = parts[0]
-        config_text = runner(["pct", "config", guest_id], timeout=5)
-        match = re.search(r"ip=([0-9.]+)", config_text)
-        rows.append(
-            {
-                "id": guest_id,
-                "name": parts[-1],
-                "status": parts[1],
-                "address": match.group(1) if match else "",
-                "kind": "container",
-            }
-        )
-    vm = config.get("vm") or {}
-    vm_id = str(vm.get("id") or "")
-    if vm_id and "running" in runner(["qm", "status", vm_id]):
-        rows.append(
-            {
-                "id": vm_id,
-                "name": vm.get("name") or vm_id,
-                "status": "running",
-                "address": _vm_address(runner, vm_id, config.get("address_prefix") or ""),
-                "kind": "vm",
-            }
-        )
-    return rows
+        key, value = line.split("=", 1)
+        values[key] = value.strip()
+    since = values.get("ExecMainStartTimestamp") or ""
+    if since in {"", "n/a"}:
+        since = ""
+    started = start_usec(values.get("ExecMainStartTimestampUSec") or "", since)
+    return values.get("ActiveState") == "activating", since, started
 
 
-def _vm_address(runner, vm_id, prefix):
-    raw = runner(["qm", "guest", "cmd", vm_id, "network-get-interfaces"], timeout=8)
+def start_usec(raw, since):
     try:
-        parsed = json.loads(raw) if raw else []
-    except json.JSONDecodeError:
-        return ""
-    if isinstance(parsed, dict):
-        interfaces = parsed.get("result") or []
-    elif isinstance(parsed, list):
-        interfaces = parsed
-    else:
-        interfaces = []
-    for item in interfaces:
-        for addr in item.get("ip-addresses") or []:
-            ip = addr.get("ip-address") or ""
-            if prefix and ip.startswith(prefix):
-                return ip
-    return ""
+        number = int(raw or "0")
+    except ValueError:
+        number = 0
+    if number:
+        return number
+    match = re.search(r"(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})", since or "")
+    if not match:
+        return 0
+    naive = datetime.datetime.strptime(f"{match.group(1)} {match.group(2)}", "%Y-%m-%d %H:%M:%S")
+    zone = datetime.datetime.now().astimezone().tzinfo
+    return int(naive.replace(tzinfo=zone).timestamp() * 1_000_000)

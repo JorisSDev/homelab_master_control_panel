@@ -1,6 +1,7 @@
 export type Job = {
   label: string;
   since: string;
+  started: string;
   elapsed: string;
 };
 
@@ -19,6 +20,8 @@ export type TimelineStep = {
 
 export type Now = {
   idle: boolean;
+  status: string;
+  detail: string;
   text: string;
   jobs: Job[];
   step: Step | null;
@@ -43,21 +46,8 @@ export type Run = {
   hidden_lines: number;
 };
 
-export type Guest = {
-  id: string;
-  name: string;
-  address: string;
-  kind: string;
-  last_update: string;
-  last_scan: string;
-  href: string;
-};
-
 export type ViewState = {
   refresh_seconds: number;
-  actions: {
-    update_confirmation: string;
-  };
   now: Now;
   schedule: {
     featured: TimerRow[];
@@ -66,9 +56,5 @@ export type ViewState = {
   history: {
     update: Run[];
     scan: Run[];
-  };
-  unfinished: {
-    facts: string[];
-    guests: Guest[];
   };
 };

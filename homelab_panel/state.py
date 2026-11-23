@@ -1,18 +1,23 @@
-"""Turn collected host facts into the page model.
-
-The view does not shell out. Pending package counts come from the last update
-report. The sign-in sentence is included only when the server is unclaimed.
-"""
+"""Turn collected host facts into the page model. The view does not shell out."""
 
 from __future__ import annotations
 
 import datetime
 import re
 
-from homelab_panel.identity import parse_identity, version_tuple
 from homelab_panel.parse_events import format_step, parse_events, steps_for_run
 from homelab_panel.parse_logs import duration_between, parse_runs
 from homelab_panel.parse_timers import format_when, parse_timers
+
+STEP_NAMES = {
+    "freshclam": "Virus definitions",
+    "leftovers": "Leftover files",
+    "clamav": "Malware scan",
+    "apt": "Packages",
+    "compose": "Compose apps",
+    "health": "Health check",
+    "security": "Security packages",
+}
 
 UNATTENDED_NOTE = (
     " unattended-upgrades is not installed, so this timer is not currently upgrading the host."
@@ -30,22 +35,14 @@ def build_state(config, snapshot, now=None):
     _apply_event_steps(scan_runs, events)
     running = _running(snapshot)
     step = _current_step(events, {item["job"] for item in running})
-    plex = parse_identity(snapshot.get("plex_xml") or "")
-    if not plex["version"]:
-        plex["version"] = _plex_from_scan(scan_runs, config)
     upgrades_active = "installed" in (snapshot.get("unattended_text") or "")
     return {
         "refresh_seconds": int(config.get("refresh_seconds") or 10),
-        "actions": {"update_confirmation": config.get("update_confirmation") or ""},
-        "now": _now(snapshot, running, step, clock, update_runs, scan_runs),
+        "now": _now(running, step, clock, update_runs, scan_runs),
         "schedule": _schedule(config, timers, upgrades_active),
         "history": {
             "update": [_run_view(run) for run in reversed(update_runs[-8:])],
             "scan": [_run_view(run) for run in reversed(scan_runs[-8:])],
-        },
-        "unfinished": {
-            "facts": _facts(config, snapshot, plex, update_runs),
-            "guests": _guests(config, snapshot, update_runs, scan_runs),
         },
     }
 
@@ -118,7 +115,7 @@ def _timeline(runs, job, step, elapsed):
         current = index == current_index
         marked.append(
             {
-                "text": text,
+                "text": _plain_step(text),
                 "current": current,
                 "guest": guest if current else "",
                 "step": name if current else "",
@@ -128,11 +125,63 @@ def _timeline(runs, job, step, elapsed):
     return marked
 
 
-def _now(snapshot, running, step, clock, update_runs, scan_runs):
+def _plain_step(text):
+    match = re.fullmatch(r"--\s+(\S+)\s+(\S+)\s+--", text or "")
+    if not match:
+        inner = (text or "").strip()
+        if inner.startswith("--") and inner.endswith("--"):
+            return inner.strip("-").strip()
+        return inner
+    guest, step = match.group(1), match.group(2)
+    if step not in STEP_NAMES and guest in STEP_NAMES:
+        guest, step = step, guest
+    label = STEP_NAMES.get(step, step.replace("-", " "))
+    where = "Host" if guest == "host" else f"Guest {guest}"
+    return f"{where} · {label}"
+
+
+def _activity(step):
+    if not step:
+        return "The job has started. The first check will appear here."
+    guest = step.get("guest") or "host"
+    name = step.get("step") or "working"
+    label = STEP_NAMES.get(name, name.replace("-", " "))
+    if guest == "host":
+        return f"{label} on the host"
+    return f"{label} on guest {guest}"
+
+
+def _status(running):
+    jobs = {item["job"] for item in running}
+    if jobs == {"scan"}:
+        return "Scan running"
+    if jobs == {"update"}:
+        return "Update running"
+    return "Jobs running"
+
+
+def _lock(running):
+    jobs = {item["job"] for item in running}
+    if jobs == {"scan"}:
+        return "The scan is using the maintenance lock. The update waits until it finishes."
+    if jobs == {"update"}:
+        return "The update is using the maintenance lock. The scan waits until it finishes."
+    return "Both jobs are active. They share one lock, so one of them is waiting."
+
+
+def _clock(since):
+    match = re.search(r"(\d{2}:\d{2})", since or "")
+    return match.group(1) if match else ""
+
+
+def _now(running, step, clock, update_runs, scan_runs):
     if not running:
+        detail = "Nothing is running. The next scan and the next update are in the schedule."
         return {
             "idle": True,
-            "text": "Nothing is running. The next scan and the next update are in the schedule below.",
+            "status": "Idle",
+            "detail": detail,
+            "text": detail,
             "jobs": [],
             "step": None,
             "timeline": [],
@@ -148,6 +197,7 @@ def _now(snapshot, running, step, clock, update_runs, scan_runs):
             {
                 "label": item["label"],
                 "since": item["since"],
+                "started": _clock(item["since"]),
                 "elapsed": elapsed,
             }
         )
@@ -159,18 +209,16 @@ def _now(snapshot, running, step, clock, update_runs, scan_runs):
             "guest": step.get("guest") or "host",
         }
     waiting = step is None
-    if len(running) == 1:
-        lock = "This job holds the maintenance lock, so the other job waits until it finishes."
-    else:
-        lock = "Both jobs are active. They share one lock, so one of them is waiting."
     return {
         "idle": False,
+        "status": _status(running),
+        "detail": _activity(step),
         "text": "",
         "jobs": jobs,
         "step": visible,
         "timeline": timeline,
         "waiting": waiting,
-        "lock": lock,
+        "lock": _lock(running),
     }
 
 
@@ -222,150 +270,8 @@ def _run_view(run):
         "heading": heading,
         "ok": bool(run["ok"]),
         "result": run["result"],
-        "steps": list(run["steps"]),
+        "steps": [_plain_step(step) for step in run["steps"]],
         "transcript": "\n".join(transcript),
         "hidden_lines": hidden,
     }
 
-
-def _plex_from_scan(scan_runs, config):
-    guest = str((config.get("plex") or {}).get("guest_id") or "")
-    for run in reversed(scan_runs):
-        if run.get("plex") and (not guest or run.get("plex_guest") == guest):
-            return run["plex"]
-    return ""
-
-
-def _facts(config, snapshot, plex, update_runs):
-    facts = [_plex_fact(config, plex)]
-    wan = config.get("wan_forward") or ""
-    if wan:
-        facts.append(wan)
-    if "disabled" in (snapshot.get("firewall_text") or ""):
-        facts.append("The host firewall is off.")
-    else:
-        facts.append("The host firewall is no longer reporting disabled.")
-    if _vzdump_jobs(snapshot.get("vzdump_text") or ""):
-        facts.append("A Proxmox backup schedule is present.")
-    else:
-        facts.append(config.get("no_vzdump") or "There is no vzdump job.")
-    facts.append(_update_fact(update_runs))
-    return facts
-
-
-def _plex_fact(config, plex):
-    plex_config = config.get("plex") or {}
-    guest = plex_config.get("guest_id") or ""
-    minimum = plex_config.get("minimum_version") or ""
-    label = f"CT {guest}" if guest else "the media guest"
-    version = plex.get("version") or ""
-    if not version:
-        return f"Plex on {label} did not answer the local identity check."
-    sentence = f"Plex on {label} is {version}."
-    if minimum:
-        if version_tuple(version) >= version_tuple(minimum):
-            sentence += f" That is newer than {minimum}."
-        else:
-            sentence += f" That is older than {minimum}."
-    if plex.get("claimed") == "0":
-        signin = plex_config.get("signin_url") or ""
-        if signin:
-            sentence += f" The server still needs a sign-in at {signin}."
-    elif plex.get("claimed") != "1":
-        sentence += " The claim state was not readable."
-    return sentence
-
-
-def _vzdump_jobs(text):
-    jobs = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or stripped.startswith("PATH="):
-            continue
-        jobs.append(stripped)
-    return jobs
-
-
-def _update_fact(update_runs):
-    if not update_runs:
-        return "No update report yet. Sunday 06:00 is the first real run."
-    last = update_runs[-1]
-    if last["security"] is None:
-        return "The last update did not leave a security-package count."
-    pending_text = ""
-    if last["pending"] is not None:
-        pending_text = (
-            f" {last['pending']} other host packages, including Proxmox and kernel packages, stay pending."
-        )
-    count = str(last["security"])
-    if last["dry"]:
-        return (
-            "The last update was a dry run. It would apply "
-            + count
-            + " Debian security packages on Sunday."
-            + pending_text
-        )
-    return "The last update reported " + count + " Debian security packages." + pending_text
-
-
-def _guests(config, snapshot, update_runs, scan_runs):
-    composed = set(str(item) for item in (config.get("compose_ids") or []))
-    if update_runs:
-        for line in update_runs[-1]["lines"]:
-            match = re.search(r"CT (\d+) compose", line)
-            if match:
-                composed.add(match.group(1))
-    links = {str(key): value for key, value in (config.get("guest_links") or {}).items()}
-    rows = []
-    for guest in snapshot.get("guests") or []:
-        guest_id = str(guest.get("id") or "")
-        if guest.get("kind") == "vm":
-            kind = "vm"
-        elif guest_id in composed:
-            kind = "compose"
-        else:
-            kind = "apt"
-        rows.append(
-            {
-                "id": guest_id,
-                "name": guest.get("name") or "",
-                "address": guest.get("address") or "",
-                "kind": kind,
-                "last_update": _guest_result(guest_id, update_runs, "update"),
-                "last_scan": _guest_result(guest_id, scan_runs, "scan"),
-                "href": _link_for(guest.get("address") or "", links.get(guest_id, "")),
-            }
-        )
-    return rows
-
-
-def _link_for(address, suffix):
-    if not suffix or not re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", address):
-        return ""
-    return "http://" + address + suffix
-
-
-def _guest_result(guest_id, runs, label):
-    if not runs:
-        return "no run yet"
-    run = runs[-1]
-    mentions = [
-        line
-        for line in run["lines"]
-        if f"CT {guest_id}" in line or f"guest={guest_id}" in line
-    ]
-    problems = [line for line in mentions if line.startswith("ISSUE") or line.startswith("FAIL")]
-    if problems:
-        return problems[-1]
-    if any(
-        line.startswith(f"-- CT {guest_id} ") or line.startswith(f"-- clamav CT {guest_id}")
-        for line in run["lines"]
-    ):
-        if run["dry"]:
-            return "seen in dry run"
-        return "clean" if run["ok"] else run["result"]
-    if any(f"VM {guest_id}" in line for line in run["lines"]):
-        if "did not answer" in "\n".join(run["lines"]):
-            return "guest agent did not answer"
-        return "clean" if run["ok"] else run["result"]
-    return "not in last " + label

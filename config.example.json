@@ -14,7 +14,7 @@
   },
   "scan_unit": "homelab-scan.service",
   "update_unit": "homelab-update.service",
-  "update_confirmation": "restart playback",
+  "password_hash": "scrypt$16384$8$1$00112233445566778899aabbccddeeff$ac4c4b82446d8a2250ebb359ed8baa0460ec8a60dce30289b604b87ac0da177f9b26368c056a5bef16c1722a46c8fe811802d1927ce738fcf71587cd25bdca45",
   "featured_timers": [
     {
       "unit": "homelab-scan.timer",

@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 
+from homelab_panel.auth import hash_password
+
 REFUSED_HOSTS = {"", "0.0.0.0", "::", "[::]"}
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -43,6 +45,9 @@ def load_config(path):
     host, port = parse_bind(os.environ.get("BIND") or data.get("bind") or "")
     data["bind_host"] = host
     data["bind_port"] = port
+    password = os.environ.get("PASSWORD")
+    if password:
+        data["password_hash"] = hash_password(password)
     return data
 
 

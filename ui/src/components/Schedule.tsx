@@ -11,16 +11,17 @@ export function Schedule({ schedule }: { schedule: ViewState["schedule"] }) {
             <th>Timer</th>
             <th>Next</th>
             <th>Last</th>
-            <th>What it does</th>
           </tr>
         </thead>
         <tbody>
           {schedule.featured.map((row) => (
             <tr key={row.unit}>
-              <td>{row.unit}</td>
+              <td>
+                <span className="unit">{row.unit}</span>
+                {row.note ? <span className="note">{row.note}</span> : null}
+              </td>
               <td>{row.next}</td>
               <td>{row.last}</td>
-              <td>{row.note}</td>
             </tr>
           ))}
         </tbody>

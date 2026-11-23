@@ -1,6 +1,6 @@
 # Homelab maintenance panel
 
-A local view of what a Proxmox host is about to do to its guests, and what it already did. It shows the job that is running, the host timers, the update and scan history, and the facts still unfinished. It can start the scan, and it can start the update after you type the confirmation that names the restart. It cannot stop a guest, change the firewall, or move the timers.
+A local view of what a Proxmox host is doing, and what it already did. The page is called Master control panel. It shows the running job, the host timers, and the update and scan history. Sign in is required. It can start the scan, and it can start the update after a confirmation that says the update restarts playback. It cannot stop a guest, change the firewall, or move the timers.
 
 The runtime is Python 3 from the standard library. The page is a React application, built ahead of time and packed into the same zipapp. The host does not need Node, a virtualenv, or another container.
 
@@ -53,4 +53,4 @@ sha256sum -c homelab-panel.pyz.sha256
 printf '%s\n' vX.Y.Z > /var/lib/homelab-panel/installed-version
 ```
 
-The service runs `/usr/bin/python3` on that zipapp with `--config` pointing at the host config. The host config names `scan_unit`, `update_unit`, and `update_confirmation`. The confirmation is the sentence the page asks you to type before the update starts. `config.example.json` uses `restart playback`.
+The service runs `/usr/bin/python3` on that zipapp with `--config` pointing at the host config. The host config names `scan_unit`, `update_unit`, and `password_hash`. The example config signs in with the password `example`. Set `PASSWORD` in the environment to replace that hash at startup. The page is HTTP on one LAN address, so the sign-in protects the actions from the rest of the network rather than from someone who can already read that address.

@@ -9,6 +9,12 @@ from unittest import mock
 
 from homelab_panel.config import ConfigError, load_config, parse_bind
 from homelab_panel.server import Panel, make_handler
+
+PASSWORD_HASH = (
+    "scrypt$16384$8$1$00112233445566778899aabbccddeeff$"
+    "ac4c4b82446d8a2250ebb359ed8baa0460ec8a60dce30289b604b87ac0da177f"
+    "9b26368c056a5bef16c1722a46c8fe811802d1927ce738fcf71587cd25bdca45"
+)
 from http.server import ThreadingHTTPServer
 
 
@@ -53,10 +59,22 @@ class ApiTests(unittest.TestCase):
             def get(self, url_path):
                 return None
 
-        panel = Panel({"refresh_seconds": 10, "featured_timers": [], "plex": {}}, provider, Missing())
-        status, headers, body = panel.handle("POST", "/api/state")
-        self.assertEqual(status, 405)
+        panel = Panel(
+            {"refresh_seconds": 10, "featured_timers": [], "plex": {}, "password_hash": PASSWORD_HASH},
+            provider,
+            Missing(),
+        )
         status, headers, body = panel.handle("GET", "/api/state")
+        self.assertEqual(status, 401)
+        status, headers, body = panel.handle("POST", "/api/login", b'{"password":"no"}')
+        self.assertEqual(status, 401)
+        self.assertNotIn("Set-Cookie", headers)
+        status, headers, body = panel.handle("POST", "/api/login", b'{"password":"example"}')
+        self.assertEqual(status, 204)
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        status, headers, body = panel.handle("POST", "/api/state", b"{}", cookie)
+        self.assertEqual(status, 405)
+        status, headers, body = panel.handle("GET", "/api/state", headers=cookie)
         self.assertEqual(status, 200)
         self.assertEqual(headers["Content-Type"], "application/json; charset=utf-8")
         payload = json.loads(body)
@@ -65,8 +83,8 @@ class ApiTests(unittest.TestCase):
         self.assertIn("now", payload)
         self.assertIn("schedule", payload)
         self.assertIn("history", payload)
-        self.assertIn("unfinished", payload)
-        panel.handle("GET", "/api/state")
+        self.assertNotIn("unfinished", payload)
+        panel.handle("GET", "/api/state", headers=cookie)
         self.assertEqual(calls["n"], 1)
 
     def test_a_running_job_refreshes_after_one_second(self):
@@ -96,14 +114,21 @@ class ApiTests(unittest.TestCase):
             def get(self, url_path):
                 return None
 
-        panel = Panel({"cache_seconds": 5, "featured_timers": [], "plex": {}}, provider, Missing())
+        panel = Panel(
+            {"cache_seconds": 5, "featured_timers": [], "plex": {}, "password_hash": PASSWORD_HASH},
+            provider,
+            Missing(),
+        )
+        status, headers, _ = panel.handle("POST", "/api/login", b'{"password":"example"}')
+        self.assertEqual(status, 204)
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
         with mock.patch("homelab_panel.server.time.monotonic", return_value=100.0):
-            panel.handle("GET", "/api/state")
+            panel.handle("GET", "/api/state", headers=cookie)
         with mock.patch("homelab_panel.server.time.monotonic", return_value=100.4):
-            panel.handle("GET", "/api/state")
+            panel.handle("GET", "/api/state", headers=cookie)
         self.assertEqual(calls["n"], 1)
         with mock.patch("homelab_panel.server.time.monotonic", return_value=101.1):
-            panel.handle("GET", "/api/state")
+            panel.handle("GET", "/api/state", headers=cookie)
         self.assertEqual(calls["n"], 2)
 
     def test_actions_start_only_when_the_gate_allows_it(self):
@@ -134,39 +159,40 @@ class ApiTests(unittest.TestCase):
             "plex": {},
             "scan_unit": "homelab-scan.service",
             "update_unit": "homelab-update.service",
-            "update_confirmation": "restart playback",
+            "password_hash": PASSWORD_HASH,
         }
         panel = Panel(config, provider, Missing(), starter=lambda command: started.append(command) or 0)
+        status, headers, _ = panel.handle("POST", "/api/login", b'{"password":"example"}')
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
 
-        status, _, body = panel.handle("POST", "/api/actions/update", b'{"confirmation":"no"}')
+        status, _, body = panel.handle("POST", "/api/actions/update", b"{}", cookie)
         self.assertEqual(status, 400)
-        self.assertIn(b"does not match", body)
+        self.assertIn(b"not confirmed", body)
         self.assertEqual(started, [])
 
-        bare = dict(config)
-        bare["update_confirmation"] = ""
-        empty = Panel(bare, provider, Missing(), starter=lambda command: started.append(command) or 0)
-        status, _, body = empty.handle("POST", "/api/actions/update", b'{"confirmation":"restart playback"}')
-        self.assertEqual(status, 400)
+        status, _, body = panel.handle("POST", "/api/actions/scan", b"{}")
+        self.assertEqual(status, 401)
         self.assertEqual(started, [])
 
         busy_snapshot = provider()
         busy_snapshot["scan_active"] = True
         busy = Panel(config, lambda: busy_snapshot, Missing(), starter=lambda command: started.append(command) or 0)
-        status, _, body = busy.handle("POST", "/api/actions/scan", b"{}")
+        status, headers, _ = busy.handle("POST", "/api/login", b'{"password":"example"}')
+        busy_cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        status, _, body = busy.handle("POST", "/api/actions/scan", b"{}", busy_cookie)
         self.assertEqual(status, 400)
         self.assertIn(b"already running", body)
         self.assertEqual(started, [])
 
-        status, _, body = panel.handle("POST", "/api/state", b"{}")
+        status, _, body = panel.handle("POST", "/api/state", b"{}", cookie)
         self.assertEqual(status, 405)
         self.assertEqual(started, [])
 
-        status, _, body = panel.handle("POST", "/api/actions/scan", b"")
+        status, _, body = panel.handle("POST", "/api/actions/scan", b"", cookie)
         self.assertEqual(status, 202)
         self.assertEqual(started, [["systemctl", "start", "--no-block", "homelab-scan.service"]])
 
-        status, _, body = panel.handle("POST", "/api/actions/update", b'{"confirmation":"restart playback"}')
+        status, _, body = panel.handle("POST", "/api/actions/update", b'{"confirm":true}', cookie)
         self.assertEqual(status, 202)
         self.assertEqual(
             started,
@@ -183,10 +209,16 @@ class ApiTests(unittest.TestCase):
             port = server.server_address[1]
             connection = HTTPConnection("127.0.0.1", port, timeout=3)
             connection.request("GET", "/api/state")
+            self.assertEqual(connection.getresponse().status, 401)
+            connection.request(
+                "GET",
+                "/api/state",
+                headers={"Cookie": cookie["Cookie"]},
+            )
             response = connection.getresponse()
             self.assertEqual(response.status, 200)
             self.assertNotIn(b"machineIdentifier", response.read())
-            connection.request("POST", "/api/state")
+            connection.request("POST", "/api/state", headers={"Cookie": cookie["Cookie"]})
             self.assertEqual(connection.getresponse().status, 405)
         finally:
             server.shutdown()
