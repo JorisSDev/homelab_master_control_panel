@@ -5,11 +5,13 @@ import type { ViewState } from "./types";
 
 const fixture: ViewState = {
   refresh_seconds: 10,
+  actions: { update_confirmation: "restart playback" },
   now: {
     idle: true,
     text: "Nothing is running. The next scan and the next update are in the schedule below.",
     jobs: [],
     step: null,
+    timeline: [],
     waiting: false,
     lock: "",
   },
@@ -78,10 +80,39 @@ describe("maintenance page", () => {
     expect(history).toBeLessThan(unfinished);
     expect(html).toContain("Host housekeeping");
     expect(html).toContain("Transcript");
-    expect(html).toContain("cannot start or stop anything");
+    expect(html).toContain("can start the scan");
+    expect(html).toContain("Run the scan");
+    expect(html).toContain("Run the update");
+    expect(html).toContain("restart playback");
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
-    expect(html).not.toContain("<form");
-    expect(html).not.toContain("<button");
+    const transcript = html.indexOf("Transcript");
+    expect(transcript).toBeGreaterThan(-1);
+    expect(transcript).toBeLessThan(html.indexOf("-- CT 201 apt --"));
+  });
+
+  it("marks the current step and disables both actions while a job runs", () => {
+    const running: ViewState = {
+      ...fixture,
+      now: {
+        idle: false,
+        text: "",
+        jobs: [{ label: "daily scan", since: "Thu 02 Jan 04:05", elapsed: "5 min" }],
+        step: { step: "clamav", guest: "201" },
+        timeline: [
+          { text: "-- 201 leftovers --", current: false, guest: "", step: "", elapsed: "" },
+          { text: "-- 201 clamav --", current: true, guest: "201", step: "clamav", elapsed: "5 min" },
+        ],
+        waiting: false,
+        lock: "This job holds the maintenance lock, so the other job waits until it finishes.",
+      },
+    };
+    const html = renderToStaticMarkup(<App initial={running} live={false} />);
+    expect(html).toContain("step-current");
+    expect(html).toContain("clamav on 201, 5 min elapsed.");
+    expect(html).toContain("-- 201 leftovers --");
+    expect(html).toContain("disabled");
+    expect(html).not.toContain("api/push");
+    expect(html).not.toContain("machineIdentifier");
   });
 });

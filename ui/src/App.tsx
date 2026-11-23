@@ -31,7 +31,8 @@ export function App({ initial = null, live = true }: Props) {
         if (!stop) {
           setState(next);
           setError("");
-          timer = window.setTimeout(tick, Math.max(1, next.refresh_seconds || 10) * 1000);
+          const seconds = next.now.idle ? Math.max(1, next.refresh_seconds || 10) : 2;
+          timer = window.setTimeout(tick, seconds * 1000);
         }
       } catch {
         if (!stop) {
@@ -52,13 +53,13 @@ export function App({ initial = null, live = true }: Props) {
     <main className="wrap">
       <h1>Maintenance</h1>
       <p className="lede">
-        What the host is about to do to the guests, and what it already did. This page cannot start or
-        stop anything.
+        What the host is about to do to the guests, and what it already did. This page can start the
+        scan, and it can start the update after you name the restart.
       </p>
       {error ? <p className="bad">{error}</p> : null}
       {state ? (
         <>
-          <Now now={state.now} />
+          <Now now={state.now} confirmation={state.actions.update_confirmation} />
           <Schedule schedule={state.schedule} />
           <History history={state.history} />
           <Unfinished unfinished={state.unfinished} />

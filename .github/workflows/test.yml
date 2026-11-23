@@ -65,4 +65,4 @@ jobs:
             dist/homelab-panel.pyz \
             dist/homelab-panel.pyz.sha256 \
             --title "${GITHUB_REF_NAME}" \
-            --notes "Pinned read-only maintenance page for a Proxmox host."
+            --notes "Pinned maintenance page for a Proxmox host. It can start the scan, and the update after the restart is named."

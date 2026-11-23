@@ -9,11 +9,20 @@ export type Step = {
   guest: string;
 };
 
+export type TimelineStep = {
+  text: string;
+  current: boolean;
+  guest: string;
+  step: string;
+  elapsed: string;
+};
+
 export type Now = {
   idle: boolean;
   text: string;
   jobs: Job[];
   step: Step | null;
+  timeline: TimelineStep[];
   waiting: boolean;
   lock: string;
 };
@@ -46,6 +55,9 @@ export type Guest = {
 
 export type ViewState = {
   refresh_seconds: number;
+  actions: {
+    update_confirmation: string;
+  };
   now: Now;
   schedule: {
     featured: TimerRow[];

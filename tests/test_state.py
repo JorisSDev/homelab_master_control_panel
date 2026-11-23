@@ -148,11 +148,38 @@ class StateTests(unittest.TestCase):
         self.assertFalse(state["now"]["idle"])
         self.assertEqual(state["now"]["step"], {"step": "clamav", "guest": "201"})
         self.assertEqual(state["now"]["jobs"][0]["elapsed"], "5 min")
+        self.assertEqual(state["now"]["timeline"][0]["current"], True)
+        self.assertEqual(state["now"]["timeline"][0]["guest"], "201")
+        self.assertEqual(state["now"]["timeline"][0]["elapsed"], "5 min")
         self.assertIn("maintenance lock", state["now"]["lock"])
+
+    def test_open_run_marks_only_the_current_step(self):
+        log = "=== homelab-scan start 2026-01-02T04:05:00+00:00 ===\n-- CT 201 leftovers --\n"
+        events = "\n".join(
+            [
+                '{"ts":"2026-01-02T04:06:00+00:00","job":"scan","kind":"step","guest":"201","step":"leftovers"}',
+                '{"ts":"2026-01-02T04:07:00+00:00","job":"scan","kind":"step","guest":"201","step":"clamav"}',
+            ]
+        )
+        state = build_state(
+            CONFIG,
+            snapshot(
+                scan_active=True,
+                scan_since="Thu 2026-01-02 04:05:00 UTC",
+                scan_started_us=1_767_000_000_000_000,
+                scan_logs=[log],
+                event_logs=[events],
+            ),
+            now=datetime.datetime.fromtimestamp(1_767_000_300, datetime.timezone.utc),
+        )
+        marked = [(item["text"], item["current"]) for item in state["now"]["timeline"]]
+        self.assertEqual(marked, [("-- 201 leftovers --", False), ("-- 201 clamav --", True)])
+        self.assertEqual(state["actions"]["update_confirmation"], "")
 
     def test_idle_copy_and_guest_rows(self):
         state = build_state(CONFIG, snapshot())
         self.assertTrue(state["now"]["idle"])
+        self.assertEqual(state["now"]["timeline"], [])
         self.assertIn("Nothing is running", state["now"]["text"])
         media = state["unfinished"]["guests"][0]
         self.assertEqual(media["kind"], "apt")

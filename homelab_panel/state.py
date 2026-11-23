@@ -10,7 +10,7 @@ import datetime
 import re
 
 from homelab_panel.identity import parse_identity, version_tuple
-from homelab_panel.parse_events import parse_events, steps_for_run
+from homelab_panel.parse_events import format_step, parse_events, steps_for_run
 from homelab_panel.parse_logs import duration_between, parse_runs
 from homelab_panel.parse_timers import format_when, parse_timers
 
@@ -36,7 +36,8 @@ def build_state(config, snapshot, now=None):
     upgrades_active = "installed" in (snapshot.get("unattended_text") or "")
     return {
         "refresh_seconds": int(config.get("refresh_seconds") or 10),
-        "now": _now(snapshot, running, step, clock),
+        "actions": {"update_confirmation": config.get("update_confirmation") or ""},
+        "now": _now(snapshot, running, step, clock, update_runs, scan_runs),
         "schedule": _schedule(config, timers, upgrades_active),
         "history": {
             "update": [_run_view(run) for run in reversed(update_runs[-8:])],
@@ -95,25 +96,62 @@ def _elapsed(started_us, clock):
     return duration_between(start.isoformat(), clock.isoformat())
 
 
-def _now(snapshot, running, step, clock):
+def _timeline(runs, job, step, elapsed):
+    latest = runs[-1] if runs else None
+    steps = list(latest["steps"]) if latest and not latest.get("end") else []
+    guest = ""
+    name = ""
+    current_text = ""
+    if step and step.get("job") == job:
+        guest = step.get("guest") or "host"
+        name = step.get("step") or "working"
+        current_text = format_step(step)
+        if current_text not in steps:
+            steps.append(current_text)
+    current_index = -1
+    if current_text:
+        for index, text in enumerate(steps):
+            if text == current_text:
+                current_index = index
+    marked = []
+    for index, text in enumerate(steps):
+        current = index == current_index
+        marked.append(
+            {
+                "text": text,
+                "current": current,
+                "guest": guest if current else "",
+                "step": name if current else "",
+                "elapsed": elapsed if current else "",
+            }
+        )
+    return marked
+
+
+def _now(snapshot, running, step, clock, update_runs, scan_runs):
     if not running:
         return {
             "idle": True,
             "text": "Nothing is running. The next scan and the next update are in the schedule below.",
             "jobs": [],
             "step": None,
+            "timeline": [],
             "waiting": False,
             "lock": "",
         }
+    runs_for = {"update": update_runs, "scan": scan_runs}
     jobs = []
+    timeline = []
     for item in running:
+        elapsed = _elapsed(item["started_us"], clock)
         jobs.append(
             {
                 "label": item["label"],
                 "since": item["since"],
-                "elapsed": _elapsed(item["started_us"], clock),
+                "elapsed": elapsed,
             }
         )
+        timeline.extend(_timeline(runs_for[item["job"]], item["job"], step, elapsed))
     visible = None
     if step:
         visible = {
@@ -130,6 +168,7 @@ def _now(snapshot, running, step, clock):
         "text": "",
         "jobs": jobs,
         "step": visible,
+        "timeline": timeline,
         "waiting": waiting,
         "lock": lock,
     }

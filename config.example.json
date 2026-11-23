@@ -12,6 +12,9 @@
     "scan": "homelab-scan.service",
     "update": "homelab-update.service"
   },
+  "scan_unit": "homelab-scan.service",
+  "update_unit": "homelab-update.service",
+  "update_confirmation": "restart playback",
   "featured_timers": [
     {
       "unit": "homelab-scan.timer",
