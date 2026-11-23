@@ -1,18 +1,21 @@
 # Homelab maintenance panel
 
-A local control panel for the jobs a Proxmox host already runs. The page is called Master control panel. Home shows Update, Scan, Health, and this panel. Sign in is required. It can start the scan, and it can start the update after a confirmation that says the update restarts playback. It cannot stop a guest, change the firewall, or move the timers.
+A local control panel for the jobs a Proxmox host already runs. The page is called Master control panel. Home shows findings, the guests, disk space, Update, Scan, Health, and this panel. Sign in is required. It can start the scan, and it can start the update after a confirmation that says the update restarts playback. It can ask apt what would upgrade, and that check does not install anything. It cannot stop a guest, change the firewall, or move the timers.
 
 The runtime is Python 3 from the standard library. The page is a React application, built ahead of time and packed into the same zipapp. The host does not need Node, a virtualenv, or another container.
 
 ## Sections
 
-- **Home.** One line for each job.
-- **Update.** Installs host packages and recreates Compose apps. It restarts playback. The counts come from the last report.
+- **Home.** One line for findings, the guests, disk space, and each job.
+- **Findings.** The last scan or update, when it was not clean.
+- **Services.** Each configured guest, running or stopped, with a link that opens it.
+- **Storage.** Free space on the host mounts and the guest disks. A mount that is filling up is called out.
+- **Update.** Installs host packages and recreates Compose apps. It restarts playback. Check pending packages asks apt what would upgrade and does not install.
 - **Scan.** Checks leftover files and runs ClamAV. It does not restart apps.
 - **Health.** Load, memory, and free space on `/`, plus the disk-check timer. Other host timers stay in a closed list.
 - **Panel.** The installed version, the latest GitHub release, and Install when they differ. Sign out is here.
 
-Pending package counts come from the last update report. The page does not simulate package upgrades on refresh.
+The package check runs only when you press the button. Refresh does not simulate an upgrade.
 
 ## What the page reads
 

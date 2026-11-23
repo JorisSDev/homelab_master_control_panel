@@ -8,6 +8,7 @@ import re
 from homelab_panel.parse_events import format_step, parse_events, steps_for_run
 from homelab_panel.parse_logs import duration_between, parse_runs
 from homelab_panel.parse_timers import format_when, parse_timers
+from homelab_panel.inventory import service_url, wanted_ids
 from homelab_panel.self_update import current_version
 
 STEP_NAMES = {
@@ -41,11 +42,18 @@ def build_state(config, snapshot, now=None):
     update = _job("update", running, step, clock, update_runs, schedule)
     scan = _job("scan", running, step, clock, scan_runs, schedule)
     health = _health(snapshot, schedule)
+    services = _services(config, snapshot.get("guests") or [])
+    storage = _storage(snapshot)
+    findings = _findings(scan_runs, update_runs)
     panel = {"version": current_version(), "latest": "", "update_available": False, "error": ""}
+    packages = {"checked": False, "total": None, "security": None, "pending": None, "names": [], "error": ""}
     return {
         "refresh_seconds": int(config.get("refresh_seconds") or 10),
         "home": {
             "cards": [
+                {"id": "findings", "title": "Findings", "status": findings["status"], "detail": findings["summary"]},
+                {"id": "services", "title": "Services", "status": services["status"], "detail": services["summary"]},
+                {"id": "storage", "title": "Storage", "status": storage["status"], "detail": storage["summary"]},
                 {"id": "update", "title": "Update", "status": update["status"], "detail": update["summary"]},
                 {"id": "scan", "title": "Scan", "status": scan["status"], "detail": scan["summary"]},
                 {"id": "health", "title": "Health", "status": health["status"], "detail": health["summary"]},
@@ -55,6 +63,10 @@ def build_state(config, snapshot, now=None):
         "update": update,
         "scan": scan,
         "health": health,
+        "services": services,
+        "storage": storage,
+        "findings": findings,
+        "packages": packages,
         "panel": panel,
     }
 
@@ -295,6 +307,149 @@ def _health(snapshot, schedule):
         },
         "housekeeping": housekeeping,
     }
+
+
+def _services(config, guests):
+    links = {str(key): value for key, value in (config.get("guest_links") or {}).items()}
+    vm = config.get("vm") or {}
+    by_id = {str(guest.get("id") or ""): guest for guest in guests}
+    ids = wanted_ids(config) or list(by_id)
+    rows = []
+    for guest_id in ids:
+        guest = by_id.get(guest_id, {})
+        raw = guest.get("status") or ""
+        if raw == "running":
+            label = "Running"
+        elif raw in {"stopped", "shutdown"}:
+            label = "Stopped"
+        else:
+            label = "Not reported"
+        name = guest.get("name") or ""
+        if not name and guest_id == str(vm.get("id") or ""):
+            name = vm.get("name") or ""
+        rows.append(
+            {
+                "id": guest_id,
+                "name": name or f"Guest {guest_id}",
+                "kind": guest.get("kind") or ("vm" if guest_id == str(vm.get("id") or "") else "container"),
+                "status": label,
+                "url": service_url(str(links.get(guest_id) or ""), guest.get("address") or ""),
+            }
+        )
+    running = sum(row["status"] == "Running" for row in rows)
+    stopped = sum(row["status"] == "Stopped" for row in rows)
+    if not rows:
+        status, summary = "None", "No guests are configured."
+    elif stopped:
+        status, summary = "Needs a look", f"{stopped} stopped"
+    elif running:
+        status, summary = "Running", f"{running} running"
+    else:
+        status, summary = "Not reported", "The host did not report guest status."
+    return {"purpose": "The guests this host already runs.", "status": status, "summary": summary, "rows": rows}
+
+
+def _storage(snapshot):
+    rows = []
+    for item in snapshot.get("mounts") or []:
+        rows.append(_space_row(item.get("mount") or "/", item.get("free"), item.get("total"), "mount"))
+    known = [row["free_bytes"] for row in rows]
+    for item in snapshot.get("storages") or []:
+        if item.get("kind") == "dir" and any(_close(item.get("free"), value) for value in known):
+            continue
+        label = item.get("label") or "storage"
+        if item.get("status") not in {"", "active"}:
+            rows.append(
+                {
+                    "label": label,
+                    "kind": item.get("kind") or "",
+                    "free": "",
+                    "total": "",
+                    "free_bytes": 0,
+                    "status": "Unavailable",
+                    "low": False,
+                }
+            )
+            continue
+        rows.append(_space_row(label, item.get("free"), item.get("total"), item.get("kind") or "storage"))
+    visible = [{key: value for key, value in row.items() if key != "free_bytes"} for row in rows]
+    low = [row["label"] for row in visible if row["low"]]
+    missing = [row["label"] for row in visible if row["status"] == "Unavailable"]
+    if low:
+        status, summary = "Low on disk", "Low on " + ", ".join(low)
+    elif missing:
+        status, summary = "Unavailable", "Unavailable: " + ", ".join(missing)
+    elif visible:
+        root = next((row for row in visible if row["label"] == "/"), visible[0])
+        summary = f"{root['free']} free on {root['label']}" if root["free"] else "Space was reported."
+        status = "Room to spare"
+    else:
+        status, summary = "Not reported", "This copy cannot read the disks."
+    return {
+        "purpose": "Free space on the host, the disk shelf, and the guest disks.",
+        "status": status,
+        "summary": summary,
+        "rows": visible,
+    }
+
+
+def _space_row(label, free, total, kind):
+    free_n = int(free or 0)
+    total_n = int(total or 0)
+    low = bool(total_n) and free_n / total_n < 0.1
+    return {
+        "label": label,
+        "kind": kind,
+        "free": _size(free_n),
+        "total": _size(total_n),
+        "free_bytes": free_n,
+        "status": "Low" if low else "Room",
+        "low": low,
+    }
+
+
+def _close(left, right):
+    if not left or not right:
+        return False
+    return abs(int(left) - int(right)) / max(int(left), int(right)) < 0.02
+
+
+def _findings(scan_runs, update_runs):
+    items = []
+    for job, runs in (("scan", scan_runs), ("update", update_runs)):
+        if not runs:
+            continue
+        last = runs[-1]
+        if last.get("ok"):
+            continue
+        view = _run_view(last)
+        items.append(
+            {
+                "job": job,
+                "guest": _finding_guest(last),
+                "result": last.get("result") or "failed",
+                "heading": view["heading"],
+                "transcript": view["transcript"],
+                "hidden_lines": view["hidden_lines"],
+            }
+        )
+    if not items:
+        status, summary = "Clear", "The last scan and the last update were fine."
+    elif len(items) == 1:
+        status, summary = "1 finding", items[0]["result"]
+    else:
+        status, summary = f"{len(items)} findings", items[0]["result"]
+    return {"purpose": "What the last scan or update left behind.", "status": status, "summary": summary, "count": len(items), "items": items}
+
+
+def _finding_guest(run):
+    blob = " ".join([run.get("result") or "", *(run.get("steps") or [])])
+    match = re.search(r"\b(?:CT|VM|guest)\s+(\d+)\b", blob, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    if re.search(r"\bhost\b", run.get("result") or "", re.IGNORECASE):
+        return "host"
+    return ""
 
 
 def _schedule(config, timers, upgrades_active):

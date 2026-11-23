@@ -49,7 +49,42 @@ export type Card = {
   detail: string;
 };
 
-export type Section = "home" | "update" | "scan" | "health" | "panel";
+export type Section = "home" | "findings" | "services" | "storage" | "update" | "scan" | "health" | "panel";
+
+export type ServiceRow = {
+  id: string;
+  name: string;
+  kind: string;
+  status: string;
+  url: string;
+};
+
+export type StorageRow = {
+  label: string;
+  kind: string;
+  free: string;
+  total: string;
+  status: string;
+  low: boolean;
+};
+
+export type Finding = {
+  job: string;
+  guest: string;
+  result: string;
+  heading: string;
+  transcript: string;
+  hidden_lines: number;
+};
+
+export type Packages = {
+  checked: boolean;
+  total: number | null;
+  security: number | null;
+  pending: number | null;
+  names: string[];
+  error: string;
+};
 
 export type ViewState = {
   refresh_seconds: number;
@@ -68,6 +103,26 @@ export type ViewState = {
     disk_check: { next: string; last: string };
     housekeeping: TimerRow[];
   };
+  services: {
+    purpose: string;
+    status: string;
+    summary: string;
+    rows: ServiceRow[];
+  };
+  storage: {
+    purpose: string;
+    status: string;
+    summary: string;
+    rows: StorageRow[];
+  };
+  findings: {
+    purpose: string;
+    status: string;
+    summary: string;
+    count: number;
+    items: Finding[];
+  };
+  packages: Packages;
   panel: {
     version: string;
     latest: string;

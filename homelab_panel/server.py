@@ -1,8 +1,9 @@
 """HTTP API and static file server.
 
 GET reads the page after sign-in. POST signs in, signs out, starts the scan,
-starts the update after it is confirmed, or installs a newer panel release.
-Every other POST is refused.
+starts the update after it is confirmed, checks pending packages, or installs
+a newer panel release. The package check does not install anything. Every
+other POST is refused.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from homelab_panel.actions import start_action, start_unit
 from homelab_panel.auth import clear_cookie, new_session, session_token, set_cookie, verify_password
 from homelab_panel.collect import collect_snapshot
 from homelab_panel.config import ConfigError, load_config
+from homelab_panel.inventory import check_packages
 from homelab_panel.self_update import UpdateError, describe, install_release
 from homelab_panel.state import build_state
 
@@ -30,18 +32,20 @@ BODY_LIMIT = 4096
 
 
 class Panel:
-    def __init__(self, config, provider, assets, starter=None, releases=None, installer=None):
+    def __init__(self, config, provider, assets, starter=None, releases=None, installer=None, packages=None):
         self.config = config
         self.provider = provider
         self.assets = assets
         self.starter = starter or start_unit
         self.releases = releases
         self.installer = installer
+        self.packages = packages
         self._lock = threading.Lock()
         self._at = 0.0
         self._state = None
         self._release = None
         self._release_at = 0.0
+        self._packages = None
         self._sessions = {}
         self._failures = 0
         self._locked_until = 0.0
@@ -58,6 +62,7 @@ class Panel:
             if self._state is None or now - self._at > self._ttl():
                 built = build_state(self.config, self.provider())
                 self._apply_release(built, info)
+                self._apply_packages(built)
                 self._state = built
                 self._at = now
             return self._state
@@ -93,6 +98,10 @@ class Panel:
             elif info.get("error"):
                 card["detail"] = info["error"]
 
+    def _apply_packages(self, state):
+        if self._packages:
+            state["packages"] = self._packages
+
     def handle(self, method, path, body=b"", headers=None):
         headers = headers or {}
         clean = path.split("?", 1)[0]
@@ -107,6 +116,8 @@ class Panel:
                 return self._action(clean, body)
             if method == "POST" and clean == "/api/panel/update":
                 return self._panel_update()
+            if method == "POST" and clean == "/api/packages/check":
+                return self._check_packages()
             if method != "GET" or clean != "/api/state":
                 return 405, {"Allow": "GET"}, b""
         elif method != "GET":
@@ -151,6 +162,16 @@ class Panel:
             return self._json(400, {"error": str(exc)})
         status = 200 if result.get("status") == "current" else 202
         return self._json(status, result)
+
+    def _check_packages(self):
+        if self.packages is None:
+            return self._json(400, {"error": "This copy cannot check packages."})
+        result = self.packages()
+        with self._lock:
+            self._packages = result
+            self._state = None
+            self._at = 0.0
+        return self._json(200, result)
 
     def _json(self, status, payload, extra=None):
         body = json.dumps(payload).encode()
@@ -314,6 +335,7 @@ def serve(config, provider=None, assets=None):
         assets or assets_from_runtime(),
         releases=lambda cfg: describe(cfg),
         installer=lambda cfg: install_release(cfg, wait=False),
+        packages=check_packages,
     )
     server = ThreadingHTTPServer((config["bind_host"], config["bind_port"]), make_handler(panel))
     server.serve_forever()

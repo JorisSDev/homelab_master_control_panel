@@ -80,6 +80,35 @@ const fixture: ViewState = {
     housekeeping: [{ unit: "man-db.timer", next: "Wed 03 Jan 00:00", last: "Mon 01 Jan 00:00" }],
   },
   panel: { version: "dev", latest: "v0.4.0", update_available: true, error: "" },
+  services: {
+    purpose: "The guests this host already runs.",
+    status: "Running",
+    summary: "2 running",
+    rows: [{ id: "201", name: "media", kind: "container", status: "Running", url: "http://10.0.0.30:32400/web" }],
+  },
+  storage: {
+    purpose: "Free space on the host, the disk shelf, and the guest disks.",
+    status: "Room to spare",
+    summary: "20.0 GB free on /",
+    rows: [{ label: "/", kind: "mount", free: "20.0 GB", total: "32.0 GB", status: "Room", low: false }],
+  },
+  findings: {
+    purpose: "What the last scan or update left behind.",
+    status: "1 finding",
+    summary: "host example finding",
+    count: 1,
+    items: [
+      {
+        job: "scan",
+        guest: "host",
+        result: "host example finding",
+        heading: "2026-01-02T04:00:00+00:00",
+        transcript: "ISSUE host example finding",
+        hidden_lines: 0,
+      },
+    ],
+  },
+  packages: { checked: false, total: null, security: null, pending: null, names: [], error: "" },
 };
 
 describe("maintenance page", () => {
@@ -90,7 +119,7 @@ describe("maintenance page", () => {
     expect(html).not.toContain("Unfinished");
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
-    for (const label of ["Home", "Update", "Scan", "Health", "Panel"]) {
+    for (const label of ["Home", "Findings", "Services", "Storage", "Update", "Scan", "Health", "Panel"]) {
       expect(html).toContain(`>${label}<`);
     }
     expect(html).toContain("Last report: clean.");
@@ -133,6 +162,8 @@ describe("maintenance page", () => {
     expect(html).toContain("7 Debian security packages");
     expect(html).toContain("Run the update");
     expect(html).not.toContain("Start the update");
+    expect(html).toContain("Check pending packages");
+    expect(html).not.toContain("apt-get install");
     const transcript = html.indexOf("Transcript");
     expect(transcript).toBeGreaterThan(-1);
     expect(transcript).toBeLessThan(html.indexOf("Guest 201 · Packages"));

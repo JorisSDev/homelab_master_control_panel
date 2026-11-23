@@ -8,6 +8,8 @@ import re
 import shutil
 import subprocess
 
+from homelab_panel.inventory import parse_address, parse_guest_table, parse_mounts, parse_pvesm, parse_resources, wanted_ids
+
 
 def run(command, timeout=8):
     try:
@@ -50,7 +52,50 @@ def collect_snapshot(config, runner=run, reader=read_text):
         "event_logs": [reader(path) for path in (config.get("events") or [])],
         "unattended_text": runner(["dpkg-query", "-W", "-f", "${Status}", "unattended-upgrades"]),
         "host": read_host(reader),
+        "guests": read_guests(config, runner, reader),
+        "mounts": read_mounts(reader),
+        "storages": parse_pvesm(runner(["pvesm", "status"])),
     }
+
+
+def read_guests(config, runner=run, reader=read_text):
+    listed = parse_resources(
+        runner(["pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json"])
+    )
+    if not listed:
+        listed.update(parse_guest_table(runner(["pct", "list"]), "container"))
+        listed.update(parse_guest_table(runner(["qm", "list"]), "vm"))
+    rows = []
+    vm = config.get("vm") or {}
+    for guest_id in wanted_ids(config):
+        info = listed.get(guest_id, {})
+        conf = reader(f"/etc/pve/lxc/{guest_id}.conf") or reader(f"/etc/pve/qemu-server/{guest_id}.conf")
+        name = info.get("name") or ""
+        if guest_id == str(vm.get("id") or "") and vm.get("name"):
+            name = name or vm["name"]
+        rows.append(
+            {
+                "id": guest_id,
+                "name": name or f"Guest {guest_id}",
+                "status": info.get("status") or "",
+                "kind": info.get("kind") or ("vm" if guest_id == str(vm.get("id") or "") else "container"),
+                "address": parse_address(conf),
+            }
+        )
+    return rows
+
+
+def read_mounts(reader=read_text, disk=shutil.disk_usage):
+    rows = []
+    for item in parse_mounts(reader("/proc/mounts")):
+        try:
+            usage = disk(item["mount"])
+        except OSError:
+            continue
+        if item["mount"] != "/" and usage.total < 1024 ** 3:
+            continue
+        rows.append({"mount": item["mount"], "fstype": item["fstype"], "free": usage.free, "total": usage.total})
+    return rows
 
 
 def read_host(reader=read_text):

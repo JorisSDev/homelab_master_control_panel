@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Login } from "./components/Login";
 import { Logo } from "./components/Logo";
-import { Health, Home, PanelPage, ScanJob, UpdateJob } from "./components/Sections";
+import { Health, Home, PanelPage, ScanJob, Services, Storage, Findings, UpdateJob } from "./components/Sections";
 import type { Section, ViewState } from "./types";
 
 type Props = {
@@ -12,6 +12,9 @@ type Props = {
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "home", label: "Home" },
+  { id: "findings", label: "Findings" },
+  { id: "services", label: "Services" },
+  { id: "storage", label: "Storage" },
   { id: "update", label: "Update" },
   { id: "scan", label: "Scan" },
   { id: "health", label: "Health" },
@@ -128,7 +131,16 @@ export function App({ initial = null, live = true, initialSection = "home" }: Pr
         {state ? (
           <>
             {section === "home" ? <Home state={state} onOpen={setSection} /> : null}
-            {section === "update" ? <UpdateJob job={state.update} /> : null}
+            {section === "findings" ? <Findings findings={state.findings} /> : null}
+            {section === "services" ? <Services services={state.services} /> : null}
+            {section === "storage" ? <Storage storage={state.storage} /> : null}
+            {section === "update" ? (
+              <UpdateJob
+                job={state.update}
+                packages={state.packages}
+                onChecked={(packages) => setState((current) => (current ? { ...current, packages } : current))}
+              />
+            ) : null}
             {section === "scan" ? <ScanJob job={state.scan} /> : null}
             {section === "health" ? <Health health={state.health} /> : null}
             {section === "panel" ? <PanelPage panel={state.panel} onSignOut={() => void signOut()} /> : null}

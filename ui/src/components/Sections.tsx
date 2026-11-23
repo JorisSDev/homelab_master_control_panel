@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Disclosure } from "./Disclosure";
 import { FadeText } from "./FadeText";
 import { Runs } from "./Runs";
-import type { JobView, Section, ViewState } from "../types";
+import type { JobView, Packages, Section, ViewState } from "../types";
 
 export function Home({ state, onOpen }: { state: ViewState; onOpen: (section: Section) => void }) {
   return (
@@ -23,11 +23,12 @@ export function Home({ state, onOpen }: { state: ViewState; onOpen: (section: Se
   );
 }
 
-export function UpdateJob({ job }: { job: JobView }) {
+export function UpdateJob({ job, packages, onChecked }: { job: JobView; packages: Packages; onChecked: (packages: Packages) => void }) {
   return (
     <section>
       <h2>Update</h2>
       <JobBody job={job} action="update" />
+      <PackageCheck packages={packages} onChecked={onChecked} />
     </section>
   );
 }
@@ -151,6 +152,157 @@ function JobAction({ action, idle }: { action: "scan" | "update"; idle: boolean 
         Run the update
       </button>
       {message ? <p className={message.startsWith("Starting") ? "ok" : "bad"}>{message}</p> : null}
+    </div>
+  );
+}
+
+export function Findings({ findings }: { findings: ViewState["findings"] }) {
+  return (
+    <section>
+      <h2>Findings</h2>
+      <p className="lede">{findings.purpose}</p>
+      <p className="status">{findings.status}</p>
+      <p className="detail">{findings.summary}</p>
+      {findings.items.length === 0 ? (
+        <p className="quiet">Nothing needs attention.</p>
+      ) : (
+        findings.items.map((item) => (
+          <article key={`${item.job}-${item.heading}`} className="run">
+            <p className="run-line">
+              <strong>{item.job === "scan" ? "Scan" : "Update"}</strong>
+              <span className="bad">{item.result}</span>
+            </p>
+            <p className="quiet">{item.guest === "host" ? "On the host" : item.guest ? `Guest ${item.guest}` : "Guest not named"}</p>
+            <Disclosure summary="Transcript">
+              <pre>{item.transcript}</pre>
+              {item.hidden_lines > 0 ? <p className="quiet">{item.hidden_lines} more lines are in the log file.</p> : null}
+            </Disclosure>
+          </article>
+        ))
+      )}
+    </section>
+  );
+}
+
+export function Services({ services }: { services: ViewState["services"] }) {
+  return (
+    <section>
+      <h2>Services</h2>
+      <p className="lede">{services.purpose}</p>
+      <p className="status">{services.status}</p>
+      <p className="detail">{services.summary}</p>
+      {services.rows.length === 0 ? (
+        <p className="quiet">No guests are configured.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Guest</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {services.rows.map((row) => (
+              <tr key={row.id}>
+                <td>
+                  <span className="unit">{row.name}</span>
+                  <span className="note">{row.kind === "vm" ? "Virtual machine" : "Container"}</span>
+                </td>
+                <td className={row.status === "Stopped" ? "bad" : undefined}>{row.status}</td>
+                <td>{row.url ? <a className="open" href={row.url} target="_blank" rel="noopener noreferrer">Open</a> : null}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+export function Storage({ storage }: { storage: ViewState["storage"] }) {
+  return (
+    <section>
+      <h2>Storage</h2>
+      <p className="lede">{storage.purpose}</p>
+      <p className="status">{storage.status}</p>
+      <p className="detail">{storage.summary}</p>
+      {storage.rows.length === 0 ? (
+        <p className="quiet">This copy cannot read the disks.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Where</th>
+              <th>Free</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {storage.rows.map((row) => (
+              <tr key={`${row.kind}-${row.label}`}>
+                <td className="unit">{row.label}</td>
+                <td>{row.free && row.total ? `${row.free} of ${row.total}` : "unknown"}</td>
+                <td className={row.low || row.status === "Unavailable" ? "bad" : undefined}>{row.status}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function PackageCheck({ packages, onChecked }: { packages: Packages; onChecked: (packages: Packages) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function check() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/packages/check", { method: "POST" });
+      const payload = (await response.json().catch(() => ({}))) as Packages & { error?: string };
+      if (response.status === 401) {
+        window.location.reload();
+        return;
+      }
+      if (!response.ok) {
+        setMessage(payload.error || "The package check did not finish.");
+        return;
+      }
+      onChecked(payload);
+    } catch {
+      setMessage("The page could not check packages.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="confirm">
+      <p>Asks what apt would upgrade. It does not install anything. Sunday still does the install.</p>
+      {packages.checked ? (
+        <p>
+          {packages.total ? `${packages.security ?? 0} security, ${packages.pending ?? 0} other.` : "Nothing is waiting."}
+        </p>
+      ) : (
+        <p className="quiet">Not checked yet.</p>
+      )}
+      {packages.names.length > 0 ? (
+        <ul>
+          {packages.names.map((name) => (
+            <li key={name}>{name}</li>
+          ))}
+        </ul>
+      ) : null}
+      {packages.error ? <p className="bad">{packages.error}</p> : null}
+      <div className="actions">
+        <button type="button" className="quiet-button" disabled={busy} onClick={() => void check()}>
+          Check pending packages
+        </button>
+      </div>
+      {message ? <p className="bad">{message}</p> : null}
     </div>
   );
 }

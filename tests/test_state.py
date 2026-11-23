@@ -178,7 +178,63 @@ class StateTests(unittest.TestCase):
         self.assertEqual(state["scan"]["status"], "Idle")
         self.assertEqual(state["scan"]["timeline"], [])
         self.assertIn("Last report", state["scan"]["detail"])
-        self.assertEqual([card["id"] for card in state["home"]["cards"]], ["update", "scan", "health", "panel"])
+        self.assertEqual(
+            [card["id"] for card in state["home"]["cards"]],
+            ["findings", "services", "storage", "update", "scan", "health", "panel"],
+        )
+
+    def test_services_link_the_configured_guests(self):
+        state = build_state(
+            {
+                **CONFIG,
+                "vm": {"id": "216", "name": "house"},
+                "guest_links": {**CONFIG["guest_links"], "208": "javascript:alert(1)"},
+            },
+            snapshot(
+                guests=[
+                    {"id": "201", "name": "media", "status": "running", "kind": "container", "address": "10.0.0.30"},
+                    {"id": "216", "name": "house", "status": "stopped", "kind": "vm", "address": "10.0.0.16"},
+                    {"id": "208", "name": "requests", "status": "running", "kind": "container", "address": "10.0.0.40"},
+                ]
+            ),
+        )
+        rows = {row["id"]: row for row in state["services"]["rows"]}
+        self.assertEqual(rows["201"]["url"], "http://10.0.0.30:32400/web")
+        self.assertEqual(rows["201"]["status"], "Running")
+        self.assertEqual(rows["216"]["status"], "Stopped")
+        self.assertEqual(rows["216"]["name"], "house")
+        self.assertEqual(rows["208"]["url"], "")
+        self.assertNotIn("javascript:", json.dumps(state["services"]))
+        self.assertEqual(state["services"]["status"], "Needs a look")
+
+    def test_a_dirty_scan_is_a_finding_and_a_clean_one_is_not(self):
+        dirty = "=== homelab-scan start 2026-01-03T04:05:00+00:00 ===\nISSUE CT 201 leftover file\n"
+        state = build_state(CONFIG, snapshot(scan_logs=[dirty]))
+        self.assertEqual(state["findings"]["count"], 1)
+        self.assertEqual(state["findings"]["items"][0]["guest"], "201")
+        self.assertIn("leftover file", state["findings"]["items"][0]["result"])
+        self.assertIn("ISSUE CT 201 leftover file", state["findings"]["items"][0]["transcript"])
+        clean = build_state(CONFIG, snapshot())
+        self.assertEqual(clean["findings"]["count"], 0)
+
+    def test_storage_calls_out_a_full_mount_and_keeps_guest_disks(self):
+        state = build_state(
+            CONFIG,
+            snapshot(
+                mounts=[
+                    {"mount": "/", "free": 20 * 1024 ** 3, "total": 32 * 1024 ** 3},
+                    {"mount": "/mnt/shelf", "free": 1 * 1024 ** 3, "total": 40 * 1024 ** 3},
+                ],
+                storages=[
+                    {"label": "local", "kind": "dir", "status": "active", "free": 20 * 1024 ** 3, "total": 32 * 1024 ** 3},
+                    {"label": "guests", "kind": "zfspool", "status": "active", "free": 100 * 1024 ** 3, "total": 200 * 1024 ** 3},
+                ],
+            ),
+        )
+        labels = [row["label"] for row in state["storage"]["rows"]]
+        self.assertEqual(labels, ["/", "/mnt/shelf", "guests"])
+        self.assertEqual(state["storage"]["status"], "Low on disk")
+        self.assertIn("/mnt/shelf", state["storage"]["summary"])
 
     def test_health_reads_load_memory_and_disk(self):
         state = build_state(

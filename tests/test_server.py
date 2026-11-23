@@ -264,3 +264,52 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 202)
         self.assertEqual(calls, ["install"])
         self.assertNotIn("homelab-scan", body.decode())
+
+    def test_package_check_simulates_and_does_not_install(self):
+        seen = []
+
+        def provider():
+            return {
+                "timers": [],
+                "scan_active": False,
+                "update_active": False,
+                "update_logs": [],
+                "scan_logs": [],
+                "event_logs": [],
+                "unattended_text": "",
+            }
+
+        class Missing:
+            def get(self, url_path):
+                return None
+
+        def packages():
+            seen.append(["apt-get", "-s", "upgrade"])
+            return {
+                "checked": True,
+                "total": 2,
+                "security": 1,
+                "pending": 1,
+                "names": ["openssl", "bash"],
+                "error": "",
+            }
+
+        panel = Panel(
+            {"cache_seconds": 5, "featured_timers": [], "password_hash": PASSWORD_HASH},
+            provider,
+            Missing(),
+            starter=lambda command: seen.append(command) or 0,
+            packages=packages,
+        )
+        status, _, _ = panel.handle("POST", "/api/packages/check", b"")
+        self.assertEqual(status, 401)
+        status, headers, _ = panel.handle("POST", "/api/login", b'{"password":"example"}')
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        status, _, body = panel.handle("POST", "/api/packages/check", b"", cookie)
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["names"], ["openssl", "bash"])
+        self.assertEqual(seen, [["apt-get", "-s", "upgrade"]])
+        status, _, body = panel.handle("GET", "/api/state", headers=cookie)
+        self.assertEqual(json.loads(body)["packages"]["total"], 2)
+        self.assertNotIn(b"apt-get install", body)

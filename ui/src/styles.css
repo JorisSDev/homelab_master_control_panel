@@ -321,6 +321,16 @@ ol.timeline li {
   margin-top: 0.7rem;
 }
 
+a.open {
+  display: inline-block;
+  font-weight: 590;
+  text-decoration: none;
+  border-radius: 980px;
+  padding: 0.35rem 0.8rem;
+  background: #1d1d1f;
+  color: #f5f5f7;
+}
+
 button {
   font: inherit;
   font-weight: 590;
@@ -500,6 +510,11 @@ pre {
 
   .step-current {
     color: #f5f5f7;
+  }
+
+  a.open {
+    background: #f5f5f7;
+    color: #1d1d1f;
   }
 
   button {
