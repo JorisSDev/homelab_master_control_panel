@@ -1,20 +1,19 @@
 # Homelab maintenance panel
 
-A local control panel for the jobs a Proxmox host already runs. The page is called Master control panel. Home shows findings, the guests, disk space, Update, Scan, and this panel. Sign in is required. It can start the scan, and it can start the update after a confirmation that says the update restarts playback. It can ask apt what would upgrade, and that check does not install anything. It cannot stop a guest, change the firewall, or move the timers.
+A local control panel for the jobs a Proxmox host already runs. The page is called Master control panel. Home is the logo. Findings are on that page, with the running guests and a line for the next scan, the next update, storage, and this panel. Sign in is required. It can start the scan, and it can start the Sunday update after a confirmation that says the update restarts playback. Check for updates does not install anything. Update on a row upgrades that container. It cannot stop a guest, change the firewall, or move the timers.
 
 The runtime is Python 3 from the standard library. The page is a React application, built ahead of time and packed into the same zipapp. The host does not need Node, a virtualenv, or another container.
 
 ## Sections
 
-- **Home.** One line for findings, the guests, disk space, and each job.
-- **Findings.** The last scan or update, when it was not clean.
-- **Containers.** Each configured guest, its status, and the services running inside it. A name with an address is a link.
+- **Home.** The logo opens this page. Findings are on that page. A status line opens the next scan, the next update, storage, and the panel version. Running guests are listed under that.
+- **Containers.** Each configured guest, its status, and the services running inside it. A name with an address is a link. Filter matches a name, an id, or a service.
 - **Storage.** Free space on the host mounts and the guest disks. A mount that is filling up is called out. An unmounted disk is listed as not mounted.
-- **Update.** The package table, Check for updates, and Update all. Check for updates asks what apt would upgrade and does not install. Update all installs packages, recreates Compose apps, and restarts playback.
+- **Update.** Lists each guest. Host packages stay in a closed disclosure. Check for updates does not install. Update on a row upgrades that container. Update all is still the Sunday job.
 - **Scan.** Checks leftover files and runs ClamAV. It does not restart apps.
 - **Panel.** The installed version, the latest GitHub release, and Install when they differ. Sign out is here.
 
-Check for updates runs only when you press the button. Refresh does not simulate an upgrade.
+Check for updates runs only when you press the button. Refresh does not simulate an upgrade or check a guest.
 
 ## What the page reads
 

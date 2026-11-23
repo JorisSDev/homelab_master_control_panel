@@ -1,9 +1,10 @@
 """HTTP API and static file server.
 
 GET reads the page after sign-in. POST signs in, signs out, starts the scan,
-starts the update after it is confirmed, checks pending packages, or installs
-a newer panel release. The package check does not install anything. Every
-other POST is refused.
+starts the Sunday update after it is confirmed, checks pending packages,
+checks running containers, upgrades one confirmed container, or installs a
+newer panel release. The package check and the guest check do not install
+anything. Every other POST is refused.
 """
 
 from __future__ import annotations
@@ -22,7 +23,8 @@ from homelab_panel.actions import start_action, start_unit
 from homelab_panel.auth import clear_cookie, new_session, session_token, set_cookie, verify_password
 from homelab_panel.collect import collect_snapshot
 from homelab_panel.config import ConfigError, load_config
-from homelab_panel.inventory import check_packages
+from homelab_panel.guests import check_guests, run_guest, running_container, update_guest
+from homelab_panel.inventory import GUEST_ID, check_packages, wanted_ids
 from homelab_panel.self_update import UpdateError, describe, install_release
 from homelab_panel.state import build_state
 
@@ -32,7 +34,7 @@ BODY_LIMIT = 4096
 
 
 class Panel:
-    def __init__(self, config, provider, assets, starter=None, releases=None, installer=None, packages=None):
+    def __init__(self, config, provider, assets, starter=None, releases=None, installer=None, packages=None, guest_runner=None):
         self.config = config
         self.provider = provider
         self.assets = assets
@@ -40,17 +42,22 @@ class Panel:
         self.releases = releases
         self.installer = installer
         self.packages = packages
+        self.guest_runner = guest_runner
         self._lock = threading.Lock()
         self._at = 0.0
         self._state = None
         self._release = None
         self._release_at = 0.0
         self._packages = None
+        self._guest_updates = None
+        self._guest_active = ""
         self._sessions = {}
         self._failures = 0
         self._locked_until = 0.0
 
     def _ttl(self):
+        if self._guest_active:
+            return ACTIVE_CACHE_SECONDS
         if self._state and (not self._state["scan"]["idle"] or not self._state["update"]["idle"]):
             return ACTIVE_CACHE_SECONDS
         return float(self.config.get("cache_seconds") or CACHE_SECONDS)
@@ -63,6 +70,7 @@ class Panel:
                 built = build_state(self.config, self.provider())
                 self._apply_release(built, info)
                 self._apply_packages(built)
+                self._apply_guest_updates(built)
                 self._state = built
                 self._at = now
             return self._state
@@ -88,19 +96,21 @@ class Panel:
         state["panel"]["latest"] = info.get("latest") or ""
         state["panel"]["update_available"] = bool(info.get("update_available"))
         state["panel"]["error"] = info.get("error") or ""
-        for card in state["home"]["cards"]:
-            if card["id"] != "panel":
-                continue
-            if info.get("update_available"):
-                card["detail"] = "A newer release is ready."
-            elif info.get("latest"):
-                card["detail"] = "This is the latest release."
-            elif info.get("error"):
-                card["detail"] = info["error"]
 
     def _apply_packages(self, state):
         if self._packages:
             state["packages"] = self._packages
+
+    def _apply_guest_updates(self, state):
+        stored = self._guest_updates
+        if stored:
+            state["guest_updates"] = {
+                "checked": bool(stored.get("checked")),
+                "error": stored.get("error") or "",
+                "rows": [dict(row) for row in stored.get("rows") or []],
+                "active": "",
+            }
+        state["guest_updates"]["active"] = self._guest_active or ""
 
     def handle(self, method, path, body=b"", headers=None):
         headers = headers or {}
@@ -118,6 +128,11 @@ class Panel:
                 return self._panel_update()
             if method == "POST" and clean == "/api/packages/check":
                 return self._check_packages()
+            if method == "POST" and clean == "/api/guests/check":
+                return self._check_guests()
+            guest_update = re.fullmatch(r"/api/guests/([^/]+)/update", clean)
+            if method == "POST" and guest_update:
+                return self._update_guest(guest_update.group(1), body)
             if method != "GET" or clean != "/api/state":
                 return 405, {"Allow": "GET"}, b""
         elif method != "GET":
@@ -172,6 +187,95 @@ class Panel:
             self._state = None
             self._at = 0.0
         return self._json(200, result)
+
+    def _check_guests(self):
+        if self.guest_runner is None:
+            return self._json(400, {"error": "This copy cannot update a guest."})
+        result = check_guests(self.config, self.provider(), self.guest_runner)
+        with self._lock:
+            result["active"] = self._guest_active or ""
+            self._guest_updates = {
+                "checked": True,
+                "error": result.get("error") or "",
+                "rows": result.get("rows") or [],
+            }
+            self._state = None
+            self._at = 0.0
+        return self._json(200, result)
+
+    def _update_guest(self, guest_id, body):
+        if self.guest_runner is None:
+            return self._json(400, {"error": "This copy cannot update a guest."})
+        if len(body) > BODY_LIMIT:
+            return self._json(400, {"error": "The request is too large."})
+        payload = _payload(body)
+        if payload is None or payload.get("confirm") is not True:
+            return self._json(400, {"error": "The update was not confirmed."})
+        if not GUEST_ID.fullmatch(guest_id) or guest_id not in wanted_ids(self.config):
+            return self._json(400, {"error": "That guest is not configured."})
+        snapshot = self.provider()
+        guest = _guest(snapshot, guest_id)
+        if guest is None or not running_container(self.config, guest):
+            return self._json(400, {"error": "That guest is not a running container."})
+        if snapshot.get("scan_active") or snapshot.get("update_active"):
+            return self._json(400, {"error": "A job is already running."})
+        with self._lock:
+            if self._guest_active:
+                return self._json(400, {"error": "A job is already running."})
+            directories = self._compose_dirs(guest_id)
+            self._guest_active = guest_id
+            self._state = None
+            self._at = 0.0
+        threading.Thread(target=self._run_guest_update, args=(guest_id, directories), daemon=True).start()
+        return self._json(202, {"started": guest_id})
+
+    def _compose_dirs(self, guest_id):
+        stored = self._guest_updates
+        if not stored or not stored.get("checked"):
+            return None
+        for row in stored.get("rows") or []:
+            if str(row.get("id") or "") == guest_id:
+                return list(row.get("compose") or [])
+        return None
+
+    def _run_guest_update(self, guest_id, directories):
+        error = "The update did not finish."
+        try:
+            error = update_guest(guest_id, directories, self.guest_runner) or ""
+        except Exception:
+            error = "The update did not finish."
+        with self._lock:
+            self._mark_guest(guest_id, error)
+            self._guest_active = ""
+            self._state = None
+            self._at = 0.0
+
+    def _mark_guest(self, guest_id, error):
+        stored = self._guest_updates or {"checked": False, "error": "", "rows": []}
+        rows = []
+        found = False
+        for row in stored.get("rows") or []:
+            copied = dict(row)
+            if str(copied.get("id") or "") == guest_id:
+                copied["error"] = error
+                found = True
+            rows.append(copied)
+        if not found:
+            rows.append(
+                {
+                    "id": guest_id,
+                    "packages": 0,
+                    "security": 0,
+                    "compose": [],
+                    "floating": False,
+                    "error": error,
+                }
+            )
+        self._guest_updates = {
+            "checked": bool(stored.get("checked")),
+            "error": stored.get("error") or "",
+            "rows": rows,
+        }
 
     def _json(self, status, payload, extra=None):
         body = json.dumps(payload).encode()
@@ -316,6 +420,13 @@ def make_handler(panel):
     return Handler
 
 
+def _guest(snapshot, guest_id):
+    for guest in snapshot.get("guests") or []:
+        if str(guest.get("id") or "") == guest_id:
+            return guest
+    return None
+
+
 def _payload(body):
     if not body:
         return {}
@@ -336,6 +447,7 @@ def serve(config, provider=None, assets=None):
         releases=lambda cfg: describe(cfg),
         installer=lambda cfg: install_release(cfg, wait=False),
         packages=check_packages,
+        guest_runner=run_guest,
     )
     server = ThreadingHTTPServer((config["bind_host"], config["bind_port"]), make_handler(panel))
     server.serve_forever()

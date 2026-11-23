@@ -26,13 +26,6 @@ const job = (over: Partial<JobView> = {}): JobView => ({
 
 const fixture: ViewState = {
   refresh_seconds: 10,
-  home: {
-    cards: [
-      { id: "update", title: "Update", status: "Idle", detail: "Last report: dry run." },
-      { id: "scan", title: "Scan", status: "Idle", detail: "Last report: clean." },
-      { id: "panel", title: "Panel", status: "dev", detail: "This copy of the panel." },
-    ],
-  },
   update: job({
     purpose: "Installs host packages and recreates Compose apps. It restarts playback.",
     detail: "Last report: dry run.",
@@ -131,23 +124,53 @@ const fixture: ViewState = {
     ],
   },
   packages: { checked: false, total: null, security: null, pending: null, names: [], upgrades: [], error: "" },
+  guest_updates: { checked: false, error: "", rows: [], active: "" },
 };
 
 describe("maintenance page", () => {
-  it("opens on home and keeps the four jobs in the sidebar", () => {
+  it("opens on home from the logo and keeps findings off the sidebar", () => {
     const html = renderToStaticMarkup(<App initial={fixture} live={false} />);
-    expect(html).toContain("Master control panel");
+    const brand = html.slice(html.indexOf("<button"), html.indexOf("</button>"));
+    expect(brand).toContain('aria-label="Home"');
+    expect(brand).toContain('class="logo"');
+    expect(brand).toContain("Master control panel");
+    expect(html).not.toContain(">Home<");
+    expect(html).not.toContain(">Findings<");
+    expect(html).not.toContain(">Home</h2>");
+    const nav = html.slice(html.indexOf("<nav>"), html.indexOf("</nav>"));
+    for (const label of ["Containers", "Storage", "Update", "Scan", "Panel"]) {
+      expect(nav).toContain(`>${label}<`);
+    }
+    expect(nav).not.toContain(">Home<");
+    expect(nav).not.toContain(">Findings<");
+    expect(html).toContain("CT 201");
+    expect(html).toContain("media");
+    expect(html).toContain('href="http://10.0.0.30:32400/web"');
+    expect(html).toContain("nginx");
+    expect(html).toContain("1 stopped");
+    expect(html).not.toContain("VM 216");
+    expect(html).toContain("host example finding");
+    expect(html).toContain("On the host");
+    expect(html).toContain("Scan Tue 02 Jan 04:00");
+    expect(html).toContain("Update Sun 04 Jan 06:00");
+    expect(html).toContain("Storage 20.0 GB free on /");
+    expect(html).toContain("Panel dev");
+    expect(html).not.toContain(">Open<");
     expect(html).not.toContain("What the host is doing");
     expect(html).not.toContain("Unfinished");
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
-    for (const label of ["Home", "Findings", "Containers", "Storage", "Update", "Scan", "Panel"]) {
-      expect(html).toContain(`>${label}<`);
-    }
     expect(html).not.toContain(">Health<");
-    expect(html).toContain("Last report: clean.");
     expect(html).not.toContain("Run the scan");
     expect(html).not.toContain("restart playback");
+    expect(html).not.toContain("apt-get install");
+    const clear = renderToStaticMarkup(
+      <App
+        initial={{ ...fixture, findings: { ...fixture.findings, count: 0, items: [] } }}
+        live={false}
+      />,
+    );
+    expect(clear).toContain("Nothing needs attention.");
   });
 
   it("shows the running scan in plain language and hides the start button", () => {
@@ -193,9 +216,26 @@ describe("maintenance page", () => {
     expect(html).not.toContain("Transcript");
     expect(html).toContain("Guest 201 · Packages");
     expect(html).toContain("=== homelab-update start ===");
+    expect(html).toContain("Host packages");
+    expect(html).toContain("Not checked yet");
+    const guest = html.slice(html.indexOf("CT 201"), html.indexOf("VM 216"));
+    const vm = html.slice(html.indexOf("VM 216"), html.indexOf("Host packages"));
+    expect(guest).toContain(">Update<");
+    expect(guest).toContain("media");
+    expect(vm).not.toContain(">Update<");
+    expect(vm).toContain("house");
     expect(html).not.toContain("apt-get install");
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
+    const updating = renderToStaticMarkup(
+      <App
+        initial={{ ...fixture, guest_updates: { ...fixture.guest_updates, active: "201" } }}
+        live={false}
+        initialSection="update"
+      />,
+    );
+    expect(updating).toContain("media is updating");
+    expect(updating).not.toContain("Start the update");
   });
 
   it("names containers without an Open button", () => {
@@ -211,9 +251,34 @@ describe("maintenance page", () => {
     expect(html).toContain("—");
     expect(html).not.toContain(">Open<");
     expect(html).not.toContain('class="open"');
+    expect(html).toContain('aria-label="Filter"');
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
     expect(html).not.toContain("apt-get install");
+    const mixed: ViewState = {
+      ...fixture,
+      services: {
+        ...fixture.services,
+        rows: [
+          fixture.services.rows[1],
+          {
+            id: "330",
+            name: "spare",
+            kind: "container",
+            status: "Not reported",
+            url: "",
+            services: ["Custom"],
+            cpu: "",
+            memory: "",
+            disk: "",
+          },
+          fixture.services.rows[0],
+        ],
+      },
+    };
+    const ordered = renderToStaticMarkup(<App initial={mixed} live={false} initialSection="services" />);
+    expect(ordered.indexOf("CT 201")).toBeLessThan(ordered.indexOf("VM 216"));
+    expect(ordered.indexOf("VM 216")).toBeLessThan(ordered.indexOf("CT 330"));
   });
 
   it("shows package versions after a check", () => {

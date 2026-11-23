@@ -208,11 +208,11 @@ class StateTests(unittest.TestCase):
         self.assertEqual(state["scan"]["status"], "Idle")
         self.assertEqual(state["scan"]["timeline"], [])
         self.assertIn("Last report", state["scan"]["detail"])
-        self.assertEqual(
-            [card["id"] for card in state["home"]["cards"]],
-            ["findings", "services", "storage", "update", "scan", "panel"],
-        )
-        self.assertEqual(state["home"]["cards"][1]["title"], "Containers")
+        self.assertNotIn("home", state)
+        self.assertIn("findings", state)
+        self.assertFalse(state["guest_updates"]["checked"])
+        self.assertEqual(state["guest_updates"]["rows"], [])
+        self.assertEqual(state["services"]["status"], "Not reported")
 
     def test_services_link_the_configured_guests(self):
         state = build_state(

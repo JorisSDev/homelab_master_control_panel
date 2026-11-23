@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Login } from "./components/Login";
 import { Logo } from "./components/Logo";
-import { Containers, Home, PanelPage, ScanJob, Storage, Findings, UpdateJob } from "./components/Sections";
+import { Containers, Home, PanelPage, ScanJob, Storage, UpdateJob } from "./components/Sections";
 import type { Section, ViewState } from "./types";
 
 type Props = {
@@ -11,8 +11,6 @@ type Props = {
 };
 
 const SECTIONS: { id: Section; label: string }[] = [
-  { id: "home", label: "Home" },
-  { id: "findings", label: "Findings" },
   { id: "services", label: "Containers" },
   { id: "storage", label: "Storage" },
   { id: "update", label: "Update" },
@@ -54,7 +52,7 @@ export function App({ initial = null, live = true, initialSection = "home" }: Pr
           setState(next);
           setAuthed(true);
           setError("");
-          const busy = !next.scan.idle || !next.update.idle;
+          const busy = !next.scan.idle || !next.update.idle || Boolean(next.guest_updates?.active);
           const seconds = busy ? 2 : Math.max(1, next.refresh_seconds || 10);
           timer = window.setTimeout(tick, seconds * 1000);
         }
@@ -108,10 +106,16 @@ export function App({ initial = null, live = true, initialSection = "home" }: Pr
   return (
     <div className="shell">
       <aside className="side">
-        <div className="brand">
+        <button
+          type="button"
+          className="brand"
+          aria-label="Home"
+          aria-current={section === "home" ? "page" : undefined}
+          onClick={() => setSection("home")}
+        >
           <Logo />
           <h1>Master control panel</h1>
-        </div>
+        </button>
         <nav>
           {SECTIONS.map((item) => (
             <button
@@ -130,14 +134,23 @@ export function App({ initial = null, live = true, initialSection = "home" }: Pr
         {state ? (
           <>
             {section === "home" ? <Home state={state} onOpen={setSection} /> : null}
-            {section === "findings" ? <Findings findings={state.findings} /> : null}
             {section === "services" ? <Containers services={state.services} /> : null}
             {section === "storage" ? <Storage storage={state.storage} /> : null}
             {section === "update" ? (
               <UpdateJob
                 job={state.update}
                 packages={state.packages}
-                onChecked={(packages) => setState((current) => (current ? { ...current, packages } : current))}
+                services={state.services}
+                guestUpdates={state.guest_updates}
+                onPackages={(packages) => setState((current) => (current ? { ...current, packages } : current))}
+                onGuests={(guestUpdates) =>
+                  setState((current) => (current ? { ...current, guest_updates: guestUpdates } : current))
+                }
+                onGuestActive={(id) =>
+                  setState((current) =>
+                    current ? { ...current, guest_updates: { ...current.guest_updates, active: id } } : current,
+                  )
+                }
               />
             ) : null}
             {section === "scan" ? <ScanJob job={state.scan} /> : null}

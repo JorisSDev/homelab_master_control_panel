@@ -28,14 +28,21 @@ body {
   border-right: 1px solid rgba(0, 0, 0, 0.06);
 }
 
-.brand {
+.side button.brand {
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  padding: 0 0.35rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.15rem 0.35rem;
+  border-radius: 12px;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
 }
 
-.brand h1 {
+.side button.brand h1 {
   font-size: 1.05rem;
 }
 
@@ -339,6 +346,26 @@ ol.timeline li {
 
 .update-bar .actions {
   margin-top: 0;
+}
+
+.status-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  margin: 0.85rem 0;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.row-actions p {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 .package-list {

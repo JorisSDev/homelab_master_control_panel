@@ -42,14 +42,7 @@ export type JobView = {
   last_result: string;
 };
 
-export type Card = {
-  id: Section;
-  title: string;
-  status: string;
-  detail: string;
-};
-
-export type Section = "home" | "findings" | "services" | "storage" | "update" | "scan" | "panel";
+export type Section = "home" | "services" | "storage" | "update" | "scan" | "panel";
 
 export type ServiceRow = {
   id: string;
@@ -99,9 +92,24 @@ export type Packages = {
   error: string;
 };
 
+export type GuestUpdateRow = {
+  id: string;
+  packages: number;
+  security: number;
+  compose: string[];
+  floating: boolean;
+  error: string;
+};
+
+export type GuestUpdates = {
+  checked: boolean;
+  error: string;
+  rows: GuestUpdateRow[];
+  active: string;
+};
+
 export type ViewState = {
   refresh_seconds: number;
-  home: { cards: Card[] };
   update: JobView;
   scan: JobView;
   health: {
@@ -136,6 +144,7 @@ export type ViewState = {
     items: Finding[];
   };
   packages: Packages;
+  guest_updates: GuestUpdates;
   panel: {
     version: string;
     latest: string;

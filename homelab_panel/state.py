@@ -55,18 +55,9 @@ def build_state(config, snapshot, now=None):
         "upgrades": [],
         "error": "",
     }
+    guest_updates = {"checked": False, "error": "", "rows": [], "active": ""}
     return {
         "refresh_seconds": int(config.get("refresh_seconds") or 10),
-        "home": {
-            "cards": [
-                {"id": "findings", "title": "Findings", "status": findings["status"], "detail": findings["summary"]},
-                {"id": "services", "title": "Containers", "status": services["status"], "detail": services["summary"]},
-                {"id": "storage", "title": "Storage", "status": storage["status"], "detail": storage["summary"]},
-                {"id": "update", "title": "Update", "status": update["status"], "detail": update["summary"]},
-                {"id": "scan", "title": "Scan", "status": scan["status"], "detail": scan["summary"]},
-                {"id": "panel", "title": "Panel", "status": panel["version"], "detail": "This copy of the panel."},
-            ]
-        },
         "update": update,
         "scan": scan,
         "health": health,
@@ -74,6 +65,7 @@ def build_state(config, snapshot, now=None):
         "storage": storage,
         "findings": findings,
         "packages": packages,
+        "guest_updates": guest_updates,
         "panel": panel,
     }
 

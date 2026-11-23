@@ -2,12 +2,14 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 from http.client import HTTPConnection
 from pathlib import Path
 from unittest import mock
 
 from homelab_panel.config import ConfigError, load_config, parse_bind
+from homelab_panel.guests import _check_one
 from homelab_panel.server import Panel, make_handler
 
 PASSWORD_HASH = (
@@ -80,7 +82,9 @@ class ApiTests(unittest.TestCase):
         payload = json.loads(body)
         self.assertNotIn("machineIdentifier", body.decode())
         self.assertNotIn("secret-id", body.decode())
-        self.assertIn("home", payload)
+        self.assertNotIn("home", payload)
+        self.assertIn("findings", payload)
+        self.assertIn("guest_updates", payload)
         self.assertIn("update", payload)
         self.assertIn("scan", payload)
         self.assertIn("health", payload)
@@ -313,3 +317,320 @@ class ApiTests(unittest.TestCase):
         status, _, body = panel.handle("GET", "/api/state", headers=cookie)
         self.assertEqual(json.loads(body)["packages"]["total"], 2)
         self.assertNotIn(b"apt-get install", body)
+
+    def test_guest_check_and_update_stay_on_argv(self):
+        calls = []
+        done = threading.Event()
+
+        def provider():
+            return {
+                "timers": [],
+                "scan_active": False,
+                "update_active": False,
+                "update_logs": [],
+                "scan_logs": [],
+                "event_logs": [],
+                "unattended_text": "",
+                "guests": [
+                    {
+                        "id": "201",
+                        "name": "media",
+                        "status": "running",
+                        "kind": "container",
+                        "services": ["plex:latest", "photo:v3", "db:16-alpine"],
+                    },
+                    {
+                        "id": "209",
+                        "name": "notes",
+                        "status": "running",
+                        "kind": "container",
+                        "services": ["photo:v3", "db:16-alpine", "registry:5000/app"],
+                    },
+                    {"id": "208", "name": "files", "status": "stopped", "kind": "container", "services": []},
+                    {"id": "216", "name": "house", "status": "running", "kind": "vm", "services": []},
+                ],
+            }
+
+        class Missing:
+            def get(self, url_path):
+                return None
+
+        config = {
+            "cache_seconds": 5,
+            "featured_timers": [],
+            "password_hash": PASSWORD_HASH,
+            "plex": {"guest_id": "201"},
+            "vm": {"id": "216", "name": "house"},
+            "compose_ids": ["208", "209"],
+        }
+
+        def runner(command, timeout=20):
+            self.assertIsInstance(command, list)
+            calls.append(list(command))
+            if "apt-get" in command and "-s" in command:
+                self.assertEqual(timeout, 20)
+                self.assertIn("upgrade", command)
+                if command[2] == "209":
+                    return None
+                return "Inst openssl [1.0] (1.1 Debian-Security)\nInst bash [2.0] (2.1 Debian:stable)\n"
+            if "find" in command:
+                self.assertFalse(any(".." in part for part in command))
+                if command[2] == "201":
+                    return "/opt/media\n/opt/bad/../secret\n/tmp/other\n/opt/stack\n"
+                return ""
+            if len(command) > 2 and command[2] == "209" and "apt-get" in command and "update" in command:
+                return None
+            if command[-2:] == ["up", "-d"] and "/opt/stack/docker-compose.yml" in command:
+                done.set()
+            return ""
+
+        bare = Panel(config, provider, Missing())
+        status, headers, _ = bare.handle("POST", "/api/login", b'{"password":"example"}')
+        bare_cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        status, _, body = bare.handle("POST", "/api/guests/check", b"", bare_cookie)
+        self.assertEqual(status, 400)
+        self.assertIn(b"This copy cannot update a guest.", body)
+        status, _, body = bare.handle("POST", "/api/guests/201/update", b'{"confirm":true}', bare_cookie)
+        self.assertEqual(status, 400)
+        self.assertIn(b"This copy cannot update a guest.", body)
+
+        panel = Panel(config, provider, Missing(), guest_runner=runner)
+        status, _, _ = panel.handle("POST", "/api/guests/201/update", b'{"confirm":true}')
+        self.assertEqual(status, 401)
+        self.assertEqual(calls, [])
+        status, headers, _ = panel.handle("POST", "/api/login", b'{"password":"example"}')
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+
+        status, _, body = panel.handle("POST", "/api/guests/201/update", b'{"confirm":false}', cookie)
+        self.assertEqual(status, 400)
+        self.assertIn(b"not confirmed", body)
+        status, _, body = panel.handle("POST", "/api/guests/201/update", b"{}", cookie)
+        self.assertEqual(status, 400)
+        self.assertEqual(calls, [])
+
+        for path in ("/api/guests/nope/update", "/api/guests/1/update", "/api/guests/9999/update"):
+            status, _, body = panel.handle("POST", path, b'{"confirm":true}', cookie)
+            self.assertEqual(status, 400, path)
+            self.assertIn(b"not configured", body)
+        for path in ("/api/guests/216/update", "/api/guests/208/update"):
+            status, _, body = panel.handle("POST", path, b'{"confirm":true}', cookie)
+            self.assertEqual(status, 400, path)
+            self.assertIn(b"running container", body)
+        self.assertEqual(calls, [])
+
+        status, _, body = panel.handle("POST", "/api/guests/check", b"", cookie)
+        self.assertEqual(status, 200)
+        checked = json.loads(body)
+        self.assertNotIn("..", body.decode())
+        rows = {row["id"]: row for row in checked["rows"]}
+        self.assertEqual(set(rows), {"201", "209"})
+        self.assertEqual(rows["201"]["packages"], 2)
+        self.assertEqual(rows["201"]["security"], 1)
+        self.assertEqual(rows["201"]["compose"], ["/opt/media", "/opt/stack"])
+        self.assertTrue(rows["201"]["floating"])
+        self.assertFalse(rows["209"]["floating"])
+        self.assertTrue(rows["209"]["error"])
+        self.assertEqual(checked["error"], "")
+        check_calls = list(calls)
+        self.assertIn(["pct", "exec", "201", "--", "apt-get", "-s", "-y", "upgrade"], check_calls)
+        self.assertIn(
+            [
+                "pct",
+                "exec",
+                "201",
+                "--",
+                "find",
+                "/opt",
+                "-maxdepth",
+                "3",
+                "(",
+                "-name",
+                "docker-compose.yml",
+                "-o",
+                "-name",
+                "compose.yml",
+                ")",
+                "-printf",
+                "%h\n",
+            ],
+            check_calls,
+        )
+        for command in check_calls:
+            self.assertNotIn("docker", command)
+            self.assertNotIn("pull", command)
+            if "upgrade" in command:
+                self.assertIn("-s", command)
+        before = len(calls)
+        status, _, body = panel.handle("GET", "/api/state", headers=cookie)
+        self.assertEqual(len(calls), before)
+        state = json.loads(body)
+        self.assertEqual(state["guest_updates"]["rows"][0]["compose"], ["/opt/media", "/opt/stack"])
+        self.assertNotIn(b"apt-get install", body)
+
+        mark = len(calls)
+        status, _, body = panel.handle("POST", "/api/guests/201/update", b'{"confirm":true}', cookie)
+        self.assertEqual(status, 202)
+        self.assertEqual(json.loads(body), {"started": "201"})
+        self.assertTrue(done.wait(3))
+        self._wait_until_idle(panel)
+        update_calls = calls[mark:]
+        self.assertIn(["pct", "exec", "201", "--", "apt-get", "update", "-qq"], update_calls)
+        self.assertIn(
+            [
+                "pct",
+                "exec",
+                "201",
+                "--",
+                "apt-get",
+                "-y",
+                "-o",
+                "Dpkg::Options::=--force-confdef",
+                "-o",
+                "Dpkg::Options::=--force-confold",
+                "upgrade",
+            ],
+            update_calls,
+        )
+        self.assertIn(
+            [
+                "pct",
+                "exec",
+                "201",
+                "--",
+                "docker",
+                "compose",
+                "-f",
+                "/opt/media/docker-compose.yml",
+                "--project-directory",
+                "/opt/media",
+                "pull",
+            ],
+            update_calls,
+        )
+        self.assertIn(
+            [
+                "pct",
+                "exec",
+                "201",
+                "--",
+                "docker",
+                "compose",
+                "-f",
+                "/opt/media/docker-compose.yml",
+                "--project-directory",
+                "/opt/media",
+                "up",
+                "-d",
+            ],
+            update_calls,
+        )
+        self.assertIn(
+            ["pct", "exec", "201", "--", "test", "-f", "/opt/media/docker-compose.yml"],
+            update_calls,
+        )
+        for command in update_calls:
+            self.assertIsInstance(command, list)
+            self.assertNotIn("-c", command)
+            self.assertFalse(any(part in {"bash", "sh"} for part in command))
+            for part in command:
+                self.assertFalse(any(char in part for char in ";|&$`<>\n"))
+                self.assertNotIn("..", part)
+            if "upgrade" in command:
+                self.assertNotIn("-s", command)
+        self.assertFalse(any(part.endswith("/compose.yml") for command in update_calls for part in command))
+
+        mark = len(calls)
+        status, _, body = panel.handle("POST", "/api/guests/209/update", b'{"confirm":true}', cookie)
+        self.assertEqual(status, 202)
+        self._wait_until_idle(panel)
+        failed = calls[mark:]
+        self.assertIn(["pct", "exec", "209", "--", "apt-get", "update", "-qq"], failed)
+        self.assertFalse(any("upgrade" in command for command in failed))
+        self.assertFalse(any("compose" in command for command in failed))
+        status, _, body = panel.handle("GET", "/api/state", headers=cookie)
+        payload = json.loads(body)
+        self.assertEqual(payload["guest_updates"]["active"], "")
+        failed_row = {row["id"]: row for row in payload["guest_updates"]["rows"]}["209"]
+        self.assertEqual(failed_row["error"], "The update did not finish.")
+
+    def test_a_guest_update_waits_for_the_job_lock(self):
+        calls = []
+        entered = threading.Event()
+        release = threading.Event()
+
+        def provider(scan_active=False):
+            return {
+                "timers": [],
+                "scan_active": scan_active,
+                "update_active": False,
+                "update_logs": [],
+                "scan_logs": [],
+                "event_logs": [],
+                "unattended_text": "",
+                "guests": [
+                    {"id": "201", "name": "media", "status": "running", "kind": "container", "services": []},
+                ],
+            }
+
+        class Missing:
+            def get(self, url_path):
+                return None
+
+        config = {
+            "cache_seconds": 5,
+            "featured_timers": [],
+            "password_hash": PASSWORD_HASH,
+            "plex": {"guest_id": "201"},
+        }
+
+        busy = Panel(config, lambda: provider(scan_active=True), Missing(), guest_runner=lambda command, timeout=20: calls.append(command) or "")
+        status, headers, _ = busy.handle("POST", "/api/login", b'{"password":"example"}')
+        busy_cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        status, _, body = busy.handle("POST", "/api/guests/201/update", b'{"confirm":true}', busy_cookie)
+        self.assertEqual(status, 400)
+        self.assertIn(b"already running", body)
+        self.assertEqual(calls, [])
+
+        def runner(command, timeout=20):
+            calls.append(list(command))
+            if "upgrade" in command and "-s" not in command:
+                entered.set()
+                self.assertTrue(release.wait(3))
+            return ""
+
+        panel = Panel(config, provider, Missing(), guest_runner=runner)
+        status, headers, _ = panel.handle("POST", "/api/login", b'{"password":"example"}')
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        try:
+            status, _, body = panel.handle("POST", "/api/guests/201/update", b'{"confirm":true}', cookie)
+            self.assertEqual(status, 202)
+            self.assertTrue(entered.wait(3))
+            status, _, body = panel.handle("POST", "/api/guests/201/update", b'{"confirm":true}', cookie)
+            self.assertEqual(status, 400)
+            self.assertIn(b"already running", body)
+        finally:
+            release.set()
+        self._wait_until_idle(panel)
+
+    def _wait_until_idle(self, panel):
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if panel._guest_active == "":
+                return
+            time.sleep(0.01)
+        self.fail("guest update did not finish")
+
+
+class GuestCheckTests(unittest.TestCase):
+    def test_a_missing_opt_keeps_the_apt_result(self):
+        def runner(command, timeout=20):
+            if "find" in command:
+                return None
+            if "apt-get" in command:
+                return "Inst bash [1.0] (2.0 Debian:stable)\n"
+            return ""
+
+        row = _check_one("201", [], runner)
+        self.assertEqual(row["packages"], 1)
+        self.assertEqual(row["compose"], [])
+        self.assertEqual(row["error"], "")

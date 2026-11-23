@@ -1,35 +1,98 @@
 import { useState } from "react";
 import { FadeText } from "./FadeText";
 import { RunDisclosure, Runs } from "./Runs";
-import type { JobView, Packages, Section, Upgrade, ViewState } from "../types";
+import type { GuestUpdateRow, GuestUpdates, JobView, Packages, Section, ServiceRow, Upgrade, ViewState } from "../types";
 
 export function Home({ state, onOpen }: { state: ViewState; onOpen: (section: Section) => void }) {
+  const running = state.services.rows.filter((row) => row.status === "Running");
+  const stopped = state.services.rows.filter((row) => row.status === "Stopped").length;
   return (
     <section>
-      <h2>Home</h2>
-      <div className="cards">
-        {state.home.cards.map((card) => (
-          <button key={card.id} type="button" className="card" onClick={() => onOpen(card.id)}>
-            <strong>{card.title}</strong>
-            <span className="status">
-              <FadeText text={card.status} />
-            </span>
-            <span className="quiet">{card.detail}</span>
-          </button>
-        ))}
+      <FindingsList findings={state.findings} />
+      <div className="status-line">
+        <button type="button" className="quiet-button" onClick={() => onOpen("scan")}>
+          Scan {state.scan.next}
+        </button>
+        <button type="button" className="quiet-button" onClick={() => onOpen("update")}>
+          Update {state.update.next}
+        </button>
+        <button type="button" className="quiet-button" onClick={() => onOpen("storage")}>
+          Storage {state.storage.summary}
+        </button>
+        <button type="button" className="quiet-button" onClick={() => onOpen("panel")}>
+          Panel {state.panel.version}
+        </button>
       </div>
+      {running.length > 0 ? (
+        <table className="stack">
+          <thead>
+            <tr>
+              <th>Guest</th>
+              <th>Services</th>
+              <th>CPU</th>
+              <th>Memory</th>
+            </tr>
+          </thead>
+          <tbody>
+            {running.map((row) => (
+              <tr key={row.id}>
+                <td data-label="Guest">
+                  <span className="unit">
+                    {row.kind === "vm" ? "VM" : "CT"} {row.id}
+                  </span>
+                  <GuestName name={row.name} url={row.url} />
+                </td>
+                <td data-label="Services">{joined(row.services)}</td>
+                <td className="num" data-label="CPU">
+                  {row.cpu}
+                </td>
+                <td className="num" data-label="Memory">
+                  {row.memory}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+      {stopped > 0 ? (
+        <div className="status-line">
+          <button type="button" className="quiet-button" onClick={() => onOpen("services")}>
+            {stopped} stopped
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-export function UpdateJob({ job, packages, onChecked }: { job: JobView; packages: Packages; onChecked: (packages: Packages) => void }) {
+export function UpdateJob({
+  job,
+  packages,
+  services,
+  guestUpdates,
+  onPackages,
+  onGuests,
+  onGuestActive,
+}: {
+  job: JobView;
+  packages: Packages;
+  services: ViewState["services"];
+  guestUpdates: GuestUpdates;
+  onPackages: (packages: Packages) => void;
+  onGuests: (guestUpdates: GuestUpdates) => void;
+  onGuestActive: (id: string) => void;
+}) {
   return (
     <section>
       <h2>Update</h2>
-      <UpdateActions job={job} onChecked={onChecked} />
+      <UpdateActions job={job} onPackages={onPackages} onGuests={onGuests} />
       <p className="quiet">Next run {job.next}</p>
       <LiveJob job={job} />
-      <PackageTable packages={packages} />
+      <GuestUpdateTable services={services} guestUpdates={guestUpdates} onGuestActive={onGuestActive} />
+      <details className="disclosure">
+        <summary>Host packages</summary>
+        <PackageTable packages={packages} />
+      </details>
       <Runs title="Past runs" runs={job.history} />
     </section>
   );
@@ -145,38 +208,74 @@ function ScanAction({ idle }: { idle: boolean }) {
   );
 }
 
-function UpdateActions({ job, onChecked }: { job: JobView; onChecked: (packages: Packages) => void }) {
+function UpdateActions({
+  job,
+  onPackages,
+  onGuests,
+}: {
+  job: JobView;
+  onPackages: (packages: Packages) => void;
+  onGuests: (guestUpdates: GuestUpdates) => void;
+}) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const canUpdate = job.idle && !job.lock;
 
-  async function post(path: string, body?: Record<string, boolean>) {
+  async function check() {
     setBusy(true);
     setMessage("");
     try {
-      const response = await fetch(path, {
+      const [packagesResponse, guestsResponse] = await Promise.all([
+        fetch("/api/packages/check", { method: "POST" }),
+        fetch("/api/guests/check", { method: "POST" }),
+      ]);
+      if (packagesResponse.status === 401 || guestsResponse.status === 401) {
+        window.location.reload();
+        return;
+      }
+      const packagesPayload = (await packagesResponse.json().catch(() => ({}))) as Packages & { error?: string };
+      const guestsPayload = (await guestsResponse.json().catch(() => ({}))) as GuestUpdates & { error?: string };
+      if (packagesResponse.ok) {
+        onPackages(packagesPayload);
+      }
+      if (guestsResponse.ok) {
+        onGuests(guestsPayload);
+      }
+      if (!packagesResponse.ok) {
+        setMessage(packagesPayload.error || "The package check did not finish.");
+      } else if (!guestsResponse.ok) {
+        setMessage(guestsPayload.error || "The guest check did not finish.");
+      }
+    } catch {
+      setMessage("The page could not check packages.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startAll() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/actions/update", {
         method: "POST",
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
       });
-      const payload = (await response.json().catch(() => ({}))) as Packages & { error?: string };
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
       if (response.status === 401) {
         window.location.reload();
         return;
       }
       if (!response.ok) {
-        setMessage(payload.error || (path.endsWith("/check") ? "The package check did not finish." : "The job did not start."));
-        return;
-      }
-      if (path.endsWith("/check")) {
-        onChecked(payload);
+        setMessage(payload.error || "The job did not start.");
         return;
       }
       setConfirming(false);
       setMessage("Starting the update.");
     } catch {
-      setMessage(path.endsWith("/check") ? "The page could not check packages." : "The page could not start the job.");
+      setMessage("The page could not start the job.");
     } finally {
       setBusy(false);
     }
@@ -185,7 +284,7 @@ function UpdateActions({ job, onChecked }: { job: JobView; onChecked: (packages:
   return (
     <div className="update-bar">
       <div className="actions">
-        <button type="button" className="quiet-button" disabled={busy} onClick={() => void post("/api/packages/check")}>
+        <button type="button" className="quiet-button" disabled={busy} onClick={() => void check()}>
           Check for updates
         </button>
         {canUpdate && !confirming ? (
@@ -195,7 +294,7 @@ function UpdateActions({ job, onChecked }: { job: JobView; onChecked: (packages:
         ) : null}
         {canUpdate && confirming ? (
           <>
-            <button type="button" disabled={busy} onClick={() => void post("/api/actions/update", { confirm: true })}>
+            <button type="button" disabled={busy} onClick={() => void startAll()}>
               Start the update
             </button>
             <button type="button" className="quiet-button" disabled={busy} onClick={() => setConfirming(false)}>
@@ -210,33 +309,34 @@ function UpdateActions({ job, onChecked }: { job: JobView; onChecked: (packages:
   );
 }
 
-export function Findings({ findings }: { findings: ViewState["findings"] }) {
+function FindingsList({ findings }: { findings: ViewState["findings"] }) {
+  if (findings.count === 0) {
+    return <p className="quiet">Nothing needs attention.</p>;
+  }
   return (
-    <section>
-      <h2>Findings</h2>
-      <p className="lede">{findings.purpose}</p>
-      <p className="status">{findings.status}</p>
-      <p className="detail">{findings.summary}</p>
-      {findings.items.length === 0 ? (
-        <p className="quiet">Nothing needs attention.</p>
-      ) : (
-        findings.items.map((item) => (
-          <RunDisclosure
-            key={`${item.job}-${item.heading}`}
-            heading={item.job === "scan" ? "Scan" : "Update"}
-            result={item.result}
-            ok={false}
-            transcript={item.transcript}
-            hiddenLines={item.hidden_lines}
-            note={item.guest === "host" ? "On the host" : item.guest ? `Guest ${item.guest}` : "Guest not named"}
-          />
-        ))
-      )}
-    </section>
+    <>
+      {findings.items.map((item) => (
+        <RunDisclosure
+          key={`${item.job}-${item.heading}`}
+          heading={item.job === "scan" ? "Scan" : "Update"}
+          result={item.result}
+          ok={false}
+          transcript={item.transcript}
+          hiddenLines={item.hidden_lines}
+          note={item.guest === "host" ? "On the host" : item.guest ? `Guest ${item.guest}` : "Guest not named"}
+        />
+      ))}
+    </>
   );
 }
 
 export function Containers({ services }: { services: ViewState["services"] }) {
+  const [query, setQuery] = useState("");
+  const ordered = [...services.rows].sort((left, right) => guestRank(left.status) - guestRank(right.status));
+  const needle = query.trim().toLowerCase();
+  const shown = needle
+    ? ordered.filter((row) => `${row.name} ${row.id} ${row.services.join(" ")}`.toLowerCase().includes(needle))
+    : ordered;
   return (
     <section>
       <h2>Containers</h2>
@@ -246,49 +346,57 @@ export function Containers({ services }: { services: ViewState["services"] }) {
       {services.rows.length === 0 ? (
         <p className="quiet">No guests are configured.</p>
       ) : (
-        <table className="stack">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Services</th>
-              <th>CPU</th>
-              <th>Memory</th>
-              <th>Disk</th>
-            </tr>
-          </thead>
-          <tbody>
-            {services.rows.map((row) => (
-              <tr key={row.id}>
-                <td className="num" data-label="ID">
-                  {row.kind === "vm" ? "VM" : "CT"} {row.id}
-                </td>
-                <td className="name" data-label="Name">
-                  {row.url ? (
-                    <a href={row.url} target="_blank" rel="noopener noreferrer">
-                      {row.name}
-                    </a>
-                  ) : (
-                    <span className="unit">{row.name}</span>
-                  )}
-                  <span className="note">
-                    <span className={row.status === "Stopped" ? "bad" : undefined}>{row.status}</span>
-                  </span>
-                </td>
-                <td data-label="Services">{row.services && row.services.length > 0 ? row.services.join(", ") : "—"}</td>
-                <td className="num" data-label="CPU">
-                  {row.cpu}
-                </td>
-                <td className="num" data-label="Memory">
-                  {row.memory}
-                </td>
-                <td className="num" data-label="Disk">
-                  {row.disk}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          <input
+            className="filter"
+            type="search"
+            aria-label="Filter"
+            placeholder="Filter"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {shown.length === 0 ? (
+            <p className="quiet">Nothing matches.</p>
+          ) : (
+            <table className="stack">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Services</th>
+                  <th>CPU</th>
+                  <th>Memory</th>
+                  <th>Disk</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((row) => (
+                  <tr key={row.id}>
+                    <td className="num" data-label="ID">
+                      {row.kind === "vm" ? "VM" : "CT"} {row.id}
+                    </td>
+                    <td className="name" data-label="Name">
+                      <GuestName name={row.name} url={row.url} />
+                      <span className="note">
+                        <span className={row.status === "Stopped" ? "bad" : undefined}>{row.status}</span>
+                      </span>
+                    </td>
+                    <td data-label="Services">{joined(row.services)}</td>
+                    <td className="num" data-label="CPU">
+                      {row.cpu}
+                    </td>
+                    <td className="num" data-label="Memory">
+                      {row.memory}
+                    </td>
+                    <td className="num" data-label="Disk">
+                      {row.disk}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
       )}
     </section>
   );
@@ -327,6 +435,155 @@ export function Storage({ storage }: { storage: ViewState["storage"] }) {
         </table>
       )}
     </section>
+  );
+}
+
+function GuestName({ name, url }: { name: string; url: string }) {
+  if (!url) {
+    return <span className="unit">{name}</span>;
+  }
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer">
+      {name}
+    </a>
+  );
+}
+
+function joined(services: string[]) {
+  return services.length > 0 ? services.join(", ") : "—";
+}
+
+function guestRank(status: string) {
+  return status === "Running" ? 0 : 1;
+}
+
+function GuestUpdateTable({
+  services,
+  guestUpdates,
+  onGuestActive,
+}: {
+  services: ViewState["services"];
+  guestUpdates: GuestUpdates;
+  onGuestActive: (id: string) => void;
+}) {
+  const byId = new Map(guestUpdates.rows.map((row) => [row.id, row]));
+  if (services.rows.length === 0) {
+    return <p className="quiet">No guests are configured.</p>;
+  }
+  return (
+    <table className="stack">
+      <thead>
+        <tr>
+          <th>Guest</th>
+          <th>Running</th>
+          <th>Waiting</th>
+          <th>Update</th>
+        </tr>
+      </thead>
+      <tbody>
+        {services.rows.map((row) => {
+          const update = byId.get(row.id);
+          const active = guestUpdates.active === row.id;
+          return (
+            <tr key={row.id} className={guestTint(update)}>
+              <td className="name" data-label="Guest">
+                <span className="unit">
+                  {row.kind === "vm" ? "VM" : "CT"} {row.id}
+                </span>
+                {active ? <span className="unit">{row.name} is updating</span> : <GuestName name={row.name} url={row.url} />}
+              </td>
+              <td data-label="Running">{joined(row.services)}</td>
+              <td className={update?.error ? "bad" : undefined} data-label="Waiting">
+                {waitingText(guestUpdates.checked, update)}
+              </td>
+              <td data-label="Update">
+                <GuestUpdate row={row} active={active} onActive={onGuestActive} />
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function waitingText(checked: boolean, row: GuestUpdateRow | undefined) {
+  if (!checked) {
+    return "Not checked yet";
+  }
+  if (!row) {
+    return "—";
+  }
+  if (row.error) {
+    return row.error;
+  }
+  return String(row.packages);
+}
+
+function guestTint(row: GuestUpdateRow | undefined) {
+  if (!row || !(row.packages > 0 || row.floating)) {
+    return undefined;
+  }
+  if (row.security > 0) {
+    return "row-security";
+  }
+  return "row-candidate";
+}
+
+function GuestUpdate({ row, active, onActive }: { row: ServiceRow; active: boolean; onActive: (id: string) => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  if (row.kind === "vm" || active) {
+    return null;
+  }
+
+  async function start() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/guests/${row.id}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (response.status === 401) {
+        window.location.reload();
+        return;
+      }
+      if (!response.ok) {
+        setMessage(payload.error || "The update did not start.");
+        return;
+      }
+      setConfirming(false);
+      onActive(row.id);
+    } catch {
+      setMessage("The page could not start the update.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="row-actions">
+      {!confirming ? (
+        <button type="button" disabled={busy} onClick={() => setConfirming(true)}>
+          Update
+        </button>
+      ) : (
+        <>
+          <p>This upgrades {row.name} and restarts what is running in it.</p>
+          <button type="button" disabled={busy} onClick={() => void start()}>
+            Start the update
+          </button>
+          <button type="button" className="quiet-button" disabled={busy} onClick={() => setConfirming(false)}>
+            Cancel
+          </button>
+        </>
+      )}
+      {message ? <p className="bad">{message}</p> : null}
+    </div>
   );
 }
 
