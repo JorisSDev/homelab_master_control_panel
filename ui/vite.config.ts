@@ -1,10 +1,29 @@
-import { defineConfig } from "vitest/config";
-import react from "@vitejs/plugin-react";
+import { fileURLToPath } from "node:url";
 
-export default defineConfig({
-  plugins: [react()],
-  test: {
-    environment: "jsdom",
-    globals: true,
-  },
+import react from "@vitejs/plugin-react";
+import { defineConfig, loadEnv } from "vite";
+
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, repoRoot, "");
+  const bind = env.BIND || "127.0.0.1:8090";
+  return {
+    plugins: [react()],
+    server: {
+      host: "127.0.0.1",
+      port: 5173,
+      strictPort: true,
+      proxy: {
+        "/api": {
+          target: `http://${bind}`,
+          changeOrigin: true,
+        },
+      },
+    },
+    test: {
+      environment: "jsdom",
+      globals: true,
+    },
+  };
 });

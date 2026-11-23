@@ -3,16 +3,36 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 REFUSED_HOSTS = {"", "0.0.0.0", "::", "[::]"}
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class ConfigError(ValueError):
     pass
 
 
+def load_dotenv(path=None):
+    file = Path(path) if path is not None else ROOT / ".env"
+    try:
+        lines = file.read_text().splitlines()
+    except OSError:
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value.strip().strip('"').strip("'")
+
+
 def load_config(path):
+    load_dotenv()
     file = Path(path)
     try:
         data = json.loads(file.read_text())
@@ -20,7 +40,7 @@ def load_config(path):
         raise ConfigError(f"could not read config: {exc}") from exc
     if not isinstance(data, dict):
         raise ConfigError("config must be an object")
-    host, port = parse_bind(data.get("bind") or "")
+    host, port = parse_bind(os.environ.get("BIND") or data.get("bind") or "")
     data["bind_host"] = host
     data["bind_port"] = port
     return data

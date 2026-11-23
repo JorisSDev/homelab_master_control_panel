@@ -1,9 +1,13 @@
 import json
+import os
+import tempfile
 import threading
 import unittest
 from http.client import HTTPConnection
+from pathlib import Path
+from unittest import mock
 
-from homelab_panel.config import ConfigError, parse_bind
+from homelab_panel.config import ConfigError, load_config, parse_bind
 from homelab_panel.server import Panel, make_handler
 from http.server import ThreadingHTTPServer
 
@@ -15,6 +19,14 @@ class BindTests(unittest.TestCase):
                 parse_bind(value if value != ":: :8090" else ":::8090")
         host, port = parse_bind("10.0.0.10:8090")
         self.assertEqual((host, port), ("10.0.0.10", 8090))
+
+    def test_bind_env_overrides_the_config_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps({"bind": "10.0.0.10:8090"}))
+            with mock.patch.dict(os.environ, {"BIND": "127.0.0.1:8090"}):
+                loaded = load_config(path)
+        self.assertEqual((loaded["bind_host"], loaded["bind_port"]), ("127.0.0.1", 8090))
 
 
 class ApiTests(unittest.TestCase):

@@ -6,3 +6,4 @@ ui/dist/
 dist/
 *.pyz
 .DS_Store
+.env

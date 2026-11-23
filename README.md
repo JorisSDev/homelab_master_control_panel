@@ -26,17 +26,16 @@ Broken lines are skipped. When a run has step events inside its start and end, t
 
 ## Develop
 
+The listen address is `BIND` in `.env`. Copy `.env.example` to `.env` and change that line. It overrides the fictional address in `config.example.json`. An empty value, `0.0.0.0`, and `::` are still refused.
+
 ```sh
 cd ui
 npm ci
 npm test
-npm run build
-cd ..
-python -m unittest discover -s tests -t .
-python -m homelab_panel --config config.example.json
+npm run dev
 ```
 
-The example bind address is `10.0.0.10`. Use an address on this machine when you want to open the page.
+`npm run dev` starts the API and the page. Open the URL it prints.
 
 ## Release
 
