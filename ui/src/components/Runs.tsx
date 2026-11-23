@@ -1,4 +1,3 @@
-import { Disclosure } from "./Disclosure";
 import type { Run } from "../types";
 
 export function Runs({ title, runs }: { title: string; runs: Run[] }) {
@@ -9,27 +8,56 @@ export function Runs({ title, runs }: { title: string; runs: Run[] }) {
         <p className="quiet">No report yet.</p>
       ) : (
         runs.map((run) => (
-          <article key={run.heading} className="run">
-            <p className="run-line">
-              <strong>{run.heading}</strong>
-              <span className={run.ok ? "ok" : "bad"}>{run.result}</span>
-            </p>
-            <Disclosure summary="Transcript">
-              {run.steps.length > 0 ? (
-                <ul>
-                  {run.steps.map((step) => (
-                    <li key={step}>{step}</li>
-                  ))}
-                </ul>
-              ) : null}
-              <pre>{run.transcript}</pre>
-              {run.hidden_lines > 0 ? (
-                <p className="quiet">{run.hidden_lines} more lines are in the log file.</p>
-              ) : null}
-            </Disclosure>
-          </article>
+          <RunDisclosure
+            key={run.heading}
+            heading={run.heading}
+            result={run.result}
+            ok={run.ok}
+            steps={run.steps}
+            transcript={run.transcript}
+            hiddenLines={run.hidden_lines}
+          />
         ))
       )}
     </>
+  );
+}
+
+export function RunDisclosure({
+  heading,
+  result,
+  ok,
+  steps = [],
+  transcript = "",
+  hiddenLines = 0,
+  note = "",
+}: {
+  heading: string;
+  result: string;
+  ok: boolean;
+  steps?: string[];
+  transcript?: string;
+  hiddenLines?: number;
+  note?: string;
+}) {
+  return (
+    <details className="run">
+      <summary>
+        <span className="run-line">
+          <strong>{heading}</strong>
+          <span className={ok ? "ok" : "bad"}>{result}</span>
+        </span>
+      </summary>
+      {note ? <p className="quiet">{note}</p> : null}
+      {steps.length > 0 ? (
+        <ul>
+          {steps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ul>
+      ) : null}
+      {transcript ? <pre>{transcript}</pre> : null}
+      {hiddenLines > 0 ? <p className="quiet">{hiddenLines} more lines are in the log file.</p> : null}
+    </details>
   );
 }

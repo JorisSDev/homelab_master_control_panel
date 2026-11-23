@@ -46,17 +46,24 @@ def build_state(config, snapshot, now=None):
     storage = _storage(snapshot)
     findings = _findings(scan_runs, update_runs)
     panel = {"version": current_version(), "latest": "", "update_available": False, "error": ""}
-    packages = {"checked": False, "total": None, "security": None, "pending": None, "names": [], "error": ""}
+    packages = {
+        "checked": False,
+        "total": None,
+        "security": None,
+        "pending": None,
+        "names": [],
+        "upgrades": [],
+        "error": "",
+    }
     return {
         "refresh_seconds": int(config.get("refresh_seconds") or 10),
         "home": {
             "cards": [
                 {"id": "findings", "title": "Findings", "status": findings["status"], "detail": findings["summary"]},
-                {"id": "services", "title": "Services", "status": services["status"], "detail": services["summary"]},
+                {"id": "services", "title": "Containers", "status": services["status"], "detail": services["summary"]},
                 {"id": "storage", "title": "Storage", "status": storage["status"], "detail": storage["summary"]},
                 {"id": "update", "title": "Update", "status": update["status"], "detail": update["summary"]},
                 {"id": "scan", "title": "Scan", "status": scan["status"], "detail": scan["summary"]},
-                {"id": "health", "title": "Health", "status": health["status"], "detail": health["summary"]},
                 {"id": "panel", "title": "Panel", "status": panel["version"], "detail": "This copy of the panel."},
             ]
         },
@@ -267,6 +274,48 @@ def _size(value):
     return f"{number / (1024 ** 2):.0f} MB"
 
 
+def _metric_value(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _amount(value):
+    return _size(value) or "0 MB"
+
+
+def _percent(value):
+    number = _metric_value(value)
+    if number is None or number < 0:
+        return ""
+    percent = number * 100
+    nearest = round(percent)
+    if abs(percent - nearest) < 0.05:
+        return f"{nearest:.0f}%"
+    return f"{percent:.1f}%"
+
+
+def _usage_pair(guest, used_key, total_key):
+    if used_key not in guest or total_key not in guest:
+        return ""
+    used = _metric_value(guest.get(used_key))
+    total = _metric_value(guest.get(total_key))
+    if used is None or total is None:
+        return ""
+    return f"{_amount(used)} / {_amount(total)}"
+
+
+def _service_names(value):
+    if not isinstance(value, list):
+        return []
+    names = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            names.append(text)
+    return names
+
+
 def _health(snapshot, schedule):
     host = snapshot.get("host") or {}
     load = str(host.get("load") or "")
@@ -334,6 +383,10 @@ def _services(config, guests):
                 "kind": guest.get("kind") or ("vm" if guest_id == str(vm.get("id") or "") else "container"),
                 "status": label,
                 "url": service_url(str(links.get(guest_id) or ""), guest.get("address") or ""),
+                "services": _service_names(guest.get("services")),
+                "cpu": _percent(guest["cpu"]) if "cpu" in guest else "",
+                "memory": _usage_pair(guest, "mem", "maxmem"),
+                "disk": _usage_pair(guest, "disk", "maxdisk"),
             }
         )
     running = sum(row["status"] == "Running" for row in rows)
@@ -346,7 +399,7 @@ def _services(config, guests):
         status, summary = "Running", f"{running} running"
     else:
         status, summary = "Not reported", "The host did not report guest status."
-    return {"purpose": "The guests this host already runs.", "status": status, "summary": summary, "rows": rows}
+    return {"purpose": "Configured guests and the services inside them.", "status": status, "summary": summary, "rows": rows}
 
 
 def _storage(snapshot):
@@ -358,6 +411,7 @@ def _storage(snapshot):
         if item.get("kind") == "dir" and any(_close(item.get("free"), value) for value in known):
             continue
         label = item.get("label") or "storage"
+        detail = item.get("detail") or ""
         if item.get("status") not in {"", "active"}:
             rows.append(
                 {
@@ -366,25 +420,15 @@ def _storage(snapshot):
                     "free": "",
                     "total": "",
                     "free_bytes": 0,
-                    "status": "Unavailable",
+                    "status": "Not mounted",
                     "low": False,
+                    "detail": detail,
                 }
             )
             continue
-        rows.append(_space_row(label, item.get("free"), item.get("total"), item.get("kind") or "storage"))
+        rows.append(_space_row(label, item.get("free"), item.get("total"), item.get("kind") or "storage", detail))
     visible = [{key: value for key, value in row.items() if key != "free_bytes"} for row in rows]
-    low = [row["label"] for row in visible if row["low"]]
-    missing = [row["label"] for row in visible if row["status"] == "Unavailable"]
-    if low:
-        status, summary = "Low on disk", "Low on " + ", ".join(low)
-    elif missing:
-        status, summary = "Unavailable", "Unavailable: " + ", ".join(missing)
-    elif visible:
-        root = next((row for row in visible if row["label"] == "/"), visible[0])
-        summary = f"{root['free']} free on {root['label']}" if root["free"] else "Space was reported."
-        status = "Room to spare"
-    else:
-        status, summary = "Not reported", "This copy cannot read the disks."
+    status, summary = _storage_summary(visible)
     return {
         "purpose": "Free space on the host, the disk shelf, and the guest disks.",
         "status": status,
@@ -393,7 +437,30 @@ def _storage(snapshot):
     }
 
 
-def _space_row(label, free, total, kind):
+def _storage_summary(visible):
+    if not visible:
+        return "Not reported", "This copy cannot read the disks."
+    low = [row["label"] for row in visible if row["low"]]
+    if low:
+        return "Low on disk", "Low on " + ", ".join(low)
+    unmounted = [row["label"] for row in visible if row["status"] == "Not mounted"]
+    mounted = [row for row in visible if row["status"] != "Not mounted"]
+    if mounted:
+        root = next((row for row in mounted if row["label"] == "/"), mounted[0])
+        summary = f"{root['free']} free on {root['label']}" if root["free"] else "Space was reported."
+        if unmounted:
+            summary = f"{summary.rstrip('.')}. {_unmounted_sentence(unmounted)}"
+        return "Room to spare", summary
+    return "Not mounted", _unmounted_sentence(unmounted)
+
+
+def _unmounted_sentence(names):
+    if len(names) == 1:
+        return f"{names[0]} is not mounted."
+    return f"{', '.join(names)} are not mounted."
+
+
+def _space_row(label, free, total, kind, detail=""):
     free_n = int(free or 0)
     total_n = int(total or 0)
     low = bool(total_n) and free_n / total_n < 0.1
@@ -405,6 +472,7 @@ def _space_row(label, free, total, kind):
         "free_bytes": free_n,
         "status": "Low" if low else "Room",
         "low": low,
+        "detail": detail,
     }
 
 
@@ -485,8 +553,24 @@ def _schedule(config, timers, upgrades_active):
     return {"featured": featured, "housekeeping": housekeeping}
 
 
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _short_start(value):
+    text = str(value or "").strip()
+    if not text or ("T" not in text and " " not in text):
+        return text
+    candidate = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.datetime.fromisoformat(candidate)
+    except ValueError:
+        return text
+    month = _MONTHS[parsed.month - 1]
+    return f"{parsed.day} {month} {parsed.year}, {parsed.hour:02d}:{parsed.minute:02d}"
+
+
 def _run_view(run):
-    heading = run["start"] or "unknown start"
+    heading = _short_start(run["start"]) or "unknown start"
     if run["dry"]:
         heading += " · dry run"
     if run["duration"]:

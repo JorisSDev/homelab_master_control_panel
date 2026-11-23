@@ -1,9 +1,12 @@
 import datetime
 import json
 import unittest
+from unittest import mock
 
+import homelab_panel.collect as collect
+from homelab_panel.collect import read_guests
 from homelab_panel.identity import parse_identity
-from homelab_panel.state import build_state
+from homelab_panel.state import _run_view, build_state
 
 IDENTITY = """<?xml version="1.0" encoding="UTF-8"?>
 <MediaContainer claimed="1" machineIdentifier="secret-id" version="4.5.6-example"/>
@@ -115,11 +118,38 @@ class StateTests(unittest.TestCase):
         self.assertEqual(scan[1]["result"], "host example finding")
         self.assertNotIn("min", scan[1]["heading"])
         self.assertIn("dry run", state["update"]["history"][0]["heading"])
+        self.assertTrue(state["update"]["history"][0]["heading"].startswith("2 Jan 2026, 03:04"))
         self.assertEqual(state["update"]["security"], 7)
         self.assertEqual(state["update"]["pending"], 4)
         self.assertTrue(state["update"]["dry"])
         self.assertNotIn("unfinished", state)
         self.assertNotIn("machineIdentifier", json.dumps(state))
+
+    def test_a_timestamp_heading_drops_seconds(self):
+        view = _run_view(
+            {
+                "start": "2024-06-07T08:05:09+00:00",
+                "dry": True,
+                "duration": "under a minute",
+                "lines": ["kept"],
+                "ok": True,
+                "result": "dry run",
+                "steps": [],
+            }
+        )
+        self.assertEqual(view["heading"], "7 Jun 2024, 08:05 · dry run · under a minute")
+        plain = _run_view(
+            {
+                "start": "not a timestamp",
+                "dry": False,
+                "duration": "2 min",
+                "lines": [],
+                "ok": False,
+                "result": "incomplete",
+                "steps": [],
+            }
+        )
+        self.assertEqual(plain["heading"], "not a timestamp · 2 min")
 
     def test_running_job_shows_step_and_elapsed(self):
         state = build_state(
@@ -180,8 +210,9 @@ class StateTests(unittest.TestCase):
         self.assertIn("Last report", state["scan"]["detail"])
         self.assertEqual(
             [card["id"] for card in state["home"]["cards"]],
-            ["findings", "services", "storage", "update", "scan", "health", "panel"],
+            ["findings", "services", "storage", "update", "scan", "panel"],
         )
+        self.assertEqual(state["home"]["cards"][1]["title"], "Containers")
 
     def test_services_link_the_configured_guests(self):
         state = build_state(
@@ -260,3 +291,168 @@ class StateTests(unittest.TestCase):
             snapshot(host={"load": "1.0", "memory_used": 1024, "memory_total": 2048, "disk_free": 1, "disk_total": 100}),
         )
         self.assertEqual(state["health"]["status"], "Low on disk")
+
+    def test_container_usage_stays_blank_when_numbers_are_missing(self):
+        state = build_state(
+            {**CONFIG, "vm": {"id": "216", "name": "house"}},
+            snapshot(
+                guests=[
+                    {
+                        "id": "201",
+                        "name": "media",
+                        "status": "running",
+                        "kind": "container",
+                        "address": "10.0.0.30",
+                        "cpu": 0.5,
+                        "mem": 1 * 1024**3,
+                        "maxmem": 2 * 1024**3,
+                        "disk": 3 * 1024**3,
+                        "maxdisk": 8 * 1024**3,
+                        "services": ["nginx", "nextcloud:apache"],
+                    },
+                    {"id": "216", "name": "house", "status": "stopped", "kind": "vm", "address": "10.0.0.16"},
+                ]
+            ),
+        )
+        rows = {row["id"]: row for row in state["services"]["rows"]}
+        self.assertEqual(rows["201"]["cpu"], "50%")
+        self.assertEqual(rows["201"]["memory"], "1.0 GB / 2.0 GB")
+        self.assertEqual(rows["201"]["disk"], "3.0 GB / 8.0 GB")
+        self.assertEqual(rows["201"]["services"], ["nginx", "nextcloud:apache"])
+        self.assertEqual(rows["216"]["kind"], "vm")
+        self.assertEqual(rows["216"]["status"], "Stopped")
+        self.assertEqual(rows["216"]["cpu"], "")
+        self.assertEqual(rows["216"]["memory"], "")
+        self.assertEqual(rows["216"]["disk"], "")
+        self.assertEqual(rows["216"]["services"], [])
+
+    def test_running_container_reads_services_and_a_vm_does_not(self):
+        commands = []
+
+        def runner(command):
+            commands.append(list(command))
+            if command[:1] == ["pvesh"]:
+                return json.dumps(
+                    [
+                        {"vmid": 201, "name": "media", "status": "running", "type": "lxc"},
+                        {"vmid": 216, "name": "house", "status": "running", "type": "qemu", "cpu": 0.5},
+                        {"vmid": 208, "name": "requests", "status": "stopped", "type": "lxc"},
+                    ]
+                )
+            if command[:4] == ["pct", "exec", "201", "--"] and command[4] == "docker":
+                return "web\tghcr.io/example/nextcloud:apache\n"
+            if command[:3] == ["pct", "exec", "201"]:
+                return "\n".join(
+                    [
+                        "docker.service loaded active running",
+                        "containerd.service loaded active running",
+                        "nginx.service loaded active running",
+                        "systemd-journald.service loaded active running",
+                        "cron.service loaded active running",
+                    ]
+                )
+            return ""
+
+        rows = {row["id"]: row for row in read_guests({**CONFIG, "vm": {"id": "216", "name": "house"}}, runner, lambda path: "")}
+        self.assertEqual(rows["201"]["services"], ["nginx", "nextcloud:apache"])
+        self.assertEqual(rows["216"]["services"], [])
+        self.assertEqual(rows["208"]["services"], [])
+        self.assertEqual(rows["216"]["cpu"], 0.5)
+        self.assertNotIn("disk", rows["216"])
+        self.assertIn(
+            [
+                "pct",
+                "exec",
+                "201",
+                "--",
+                "systemctl",
+                "list-units",
+                "--type=service",
+                "--state=running",
+                "--no-legend",
+                "--plain",
+                "--no-pager",
+            ],
+            commands,
+        )
+        self.assertFalse(any(item[:3] == ["pct", "exec", "216"] for item in commands))
+        self.assertFalse(any(item[:3] == ["pct", "exec", "208"] for item in commands))
+
+    def test_an_empty_runner_yields_no_inner_services_and_is_not_cached(self):
+        calls = {"exec": 0}
+
+        def runner(command):
+            if command[:1] == ["pvesh"]:
+                return json.dumps([{"vmid": 201, "name": "media", "status": "running", "type": "lxc"}])
+            if command[:2] == ["pct", "exec"]:
+                calls["exec"] += 1
+                return ""
+            return ""
+
+        config = {"plex": {"guest_id": "201"}}
+        first = read_guests(config, runner, lambda path: "")
+        second = read_guests(config, runner, lambda path: "")
+        self.assertEqual(first[0]["services"], [])
+        self.assertEqual(second[0]["services"], [])
+        self.assertEqual(calls["exec"], 2)
+
+    def test_the_real_runner_caches_guest_exec(self):
+        calls = []
+
+        def fake(command, timeout=8):
+            if command[:2] == ["pct", "exec"]:
+                calls.append(timeout)
+                return "nginx.service loaded active running\n"
+            if command[:1] == ["pvesh"]:
+                return json.dumps([{"vmid": 201, "name": "media", "status": "running", "type": "lxc"}])
+            return ""
+
+        config = {"plex": {"guest_id": "201"}}
+        collect._SERVICE_CACHE.clear()
+        try:
+            with mock.patch("homelab_panel.collect.run", fake):
+                first = read_guests(config, collect.run, lambda path: "")
+                second = read_guests(config, collect.run, lambda path: "")
+        finally:
+            collect._SERVICE_CACHE.clear()
+        self.assertEqual(first[0]["services"], ["nginx"])
+        self.assertEqual(second[0]["services"], ["nginx"])
+        self.assertEqual(calls, [4])
+
+    def test_an_unmounted_disk_does_not_mark_the_page_unavailable(self):
+        shelf = {
+            "label": "shelf",
+            "kind": "dir",
+            "status": "inactive",
+            "free": 0,
+            "total": 0,
+            "detail": "/mnt/fictional-shelf",
+        }
+        state = build_state(
+            CONFIG,
+            snapshot(
+                mounts=[{"mount": "/", "free": 20 * 1024**3, "total": 32 * 1024**3}],
+                storages=[shelf],
+            ),
+        )
+        row = next(item for item in state["storage"]["rows"] if item["label"] == "shelf")
+        self.assertEqual(row["status"], "Not mounted")
+        self.assertEqual(row["detail"], "/mnt/fictional-shelf")
+        self.assertEqual(row["free"], "")
+        self.assertEqual(row["total"], "")
+        self.assertEqual(state["storage"]["status"], "Room to spare")
+        self.assertIn("shelf", state["storage"]["summary"])
+        self.assertIn("not mounted", state["storage"]["summary"])
+        self.assertNotIn("Unavailable", json.dumps(state["storage"]))
+        alone = build_state(CONFIG, snapshot(mounts=[], storages=[shelf]))
+        self.assertEqual(alone["storage"]["status"], "Not mounted")
+        self.assertIn("shelf is not mounted", alone["storage"]["summary"])
+        low = build_state(
+            CONFIG,
+            snapshot(
+                mounts=[{"mount": "/mnt/fictional-full", "free": 1 * 1024**3, "total": 40 * 1024**3}],
+                storages=[shelf],
+            ),
+        )
+        self.assertEqual(low["storage"]["status"], "Low on disk")
+        self.assertIn("/mnt/fictional-full", low["storage"]["summary"])

@@ -7,8 +7,22 @@ import json
 import re
 import shutil
 import subprocess
+import time
 
-from homelab_panel.inventory import parse_address, parse_guest_table, parse_mounts, parse_pvesm, parse_resources, wanted_ids
+from homelab_panel.inventory import (
+    docker_listed,
+    parse_address,
+    parse_guest_services,
+    parse_guest_table,
+    parse_mounts,
+    parse_pvesm,
+    parse_resources,
+    wanted_ids,
+)
+
+_SERVICE_CACHE = {}
+_SERVICE_CACHE_SECONDS = 60
+_GUEST_TIMEOUT = 4
 
 
 def run(command, timeout=8):
@@ -26,7 +40,7 @@ def read_text(path):
         return ""
 
 
-def collect_snapshot(config, runner=run, reader=read_text):
+def collect_snapshot(config, runner=run, reader=read_text, note=None):
     timers_raw = runner(["systemctl", "list-timers", "--all", "--output=json", "--no-pager"])
     try:
         timers = json.loads(timers_raw) if timers_raw else []
@@ -54,7 +68,7 @@ def collect_snapshot(config, runner=run, reader=read_text):
         "host": read_host(reader),
         "guests": read_guests(config, runner, reader),
         "mounts": read_mounts(reader),
-        "storages": parse_pvesm(runner(["pvesm", "status"])),
+        "storages": parse_pvesm(*_storage_reading(runner, note)),
     }
 
 
@@ -73,16 +87,92 @@ def read_guests(config, runner=run, reader=read_text):
         name = info.get("name") or ""
         if guest_id == str(vm.get("id") or "") and vm.get("name"):
             name = name or vm["name"]
-        rows.append(
-            {
-                "id": guest_id,
-                "name": name or f"Guest {guest_id}",
-                "status": info.get("status") or "",
-                "kind": info.get("kind") or ("vm" if guest_id == str(vm.get("id") or "") else "container"),
-                "address": parse_address(conf),
-            }
-        )
+        kind = info.get("kind") or ("vm" if guest_id == str(vm.get("id") or "") else "container")
+        status = info.get("status") or ""
+        services = _guest_services(guest_id, runner) if status == "running" and kind == "container" else []
+        row = {
+            "id": guest_id,
+            "name": name or f"Guest {guest_id}",
+            "status": status,
+            "kind": kind,
+            "address": parse_address(conf),
+            "services": services,
+        }
+        for key in ("cpu", "mem", "maxmem", "disk", "maxdisk"):
+            if key in info and info[key] is not None:
+                row[key] = info[key]
+        rows.append(row)
     return rows
+
+
+def _storage_reading(runner, note):
+    command = ["pvesm", "status"]
+    if note is not None:
+        return runner(command) or "", note(command) or ""
+    if runner is run:
+        return _run_both(command)
+    return runner(command) or "", ""
+
+
+def _run_both(command, timeout=8):
+    try:
+        completed = subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return "", ""
+    return completed.stdout or "", completed.stderr or ""
+
+
+def _guest_services(guest_id, runner):
+    if runner is not run:
+        return _read_guest_services(guest_id, runner)
+    now = time.monotonic()
+    cached = _SERVICE_CACHE.get(guest_id)
+    if cached and now - cached[0] < _SERVICE_CACHE_SECONDS:
+        return list(cached[1])
+    services = _read_guest_services(guest_id, runner)
+    _SERVICE_CACHE[guest_id] = (now, list(services))
+    return list(services)
+
+
+def _read_guest_services(guest_id, runner):
+    units = _invoke(
+        runner,
+        [
+            "pct",
+            "exec",
+            str(guest_id),
+            "--",
+            "systemctl",
+            "list-units",
+            "--type=service",
+            "--state=running",
+            "--no-legend",
+            "--plain",
+            "--no-pager",
+        ],
+    )
+    if not units.strip():
+        return []
+    images = ""
+    if docker_listed(units):
+        images = _invoke(
+            runner,
+            ["pct", "exec", str(guest_id), "--", "docker", "ps", "--format", "{{.Names}}\t{{.Image}}"],
+        )
+    return parse_guest_services(units, images)
+
+
+def _invoke(runner, command):
+    if runner is run:
+        return runner(command, timeout=_GUEST_TIMEOUT) or ""
+    return runner(command) or ""
 
 
 def read_mounts(reader=read_text, disk=shutil.disk_usage):

@@ -185,6 +185,7 @@ p {
   margin-top: 0.2rem;
   font-size: 0.86rem;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .unit {
@@ -239,6 +240,21 @@ table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.95rem;
+}
+
+table.stack td,
+td.name,
+td.name a {
+  overflow-wrap: anywhere;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+table a {
+  color: inherit;
+  font-weight: 600;
 }
 
 th,
@@ -321,14 +337,28 @@ ol.timeline li {
   margin-top: 0.7rem;
 }
 
-a.open {
-  display: inline-block;
-  font-weight: 590;
-  text-decoration: none;
-  border-radius: 980px;
-  padding: 0.35rem 0.8rem;
-  background: #1d1d1f;
-  color: #f5f5f7;
+.update-bar .actions {
+  margin-top: 0;
+}
+
+.package-list {
+  margin-top: 1rem;
+}
+
+input.filter {
+  width: 12rem;
+  max-width: 100%;
+  margin: 0 0 0.7rem;
+}
+
+tr.row-candidate td {
+  background: #f6edd9;
+  color: #1d1d1f;
+}
+
+tr.row-security td {
+  background: #f8d4d4;
+  color: #1d1d1f;
 }
 
 button {
@@ -339,6 +369,7 @@ button {
   padding: 0.5rem 0.95rem;
   background: #1d1d1f;
   color: #f5f5f7;
+  transition: transform 160ms ease-out;
 }
 
 button:disabled {
@@ -353,7 +384,6 @@ button.quiet-button {
 
 button:active:not(:disabled) {
   transform: scale(0.97);
-  transition: transform 100ms ease-out;
 }
 
 .gate {
@@ -411,6 +441,64 @@ summary {
   font-weight: 590;
 }
 
+details.run {
+  margin-top: 0.35rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+details.run > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  list-style: none;
+}
+
+details.run > summary::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0.28rem 0 0.28rem 0.38rem;
+  border-color: transparent transparent transparent currentColor;
+}
+
+details.run[open] > summary::before {
+  border-width: 0.38rem 0.28rem 0 0.28rem;
+  border-color: currentColor transparent transparent transparent;
+}
+
+details.run > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.run > summary::marker {
+  content: "";
+}
+
+details.run > summary:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+details.run .run-line {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  details.run:not([open]) > summary:hover {
+    background: #f5f5f7;
+    border-radius: 8px;
+  }
+}
+
+details.run ul {
+  margin: 0.55rem 0 0;
+  padding-left: 1.15rem;
+}
+
 .fold {
   overflow: hidden;
 }
@@ -460,6 +548,44 @@ pre {
     display: block;
     overflow-x: auto;
   }
+
+  table.stack {
+    display: block;
+    overflow: visible;
+  }
+
+  table.stack thead {
+    display: none;
+  }
+
+  table.stack tr {
+    display: block;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  }
+
+  table.stack td {
+    display: block;
+    border: 0;
+    padding: 0.28rem 0;
+    white-space: normal;
+  }
+
+  table.stack td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 0.12rem;
+    font-size: 0.75rem;
+    font-weight: 620;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #6e6e73;
+  }
+
+  table.stack tr.row-candidate td::before,
+  table.stack tr.row-security td::before {
+    color: inherit;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -504,7 +630,9 @@ pre {
   th,
   td,
   ol.timeline li,
-  .confirm {
+  .confirm,
+  details.run,
+  table.stack tr {
     border-color: rgba(255, 255, 255, 0.08);
   }
 
@@ -512,9 +640,29 @@ pre {
     color: #f5f5f7;
   }
 
-  a.open {
-    background: #f5f5f7;
-    color: #1d1d1f;
+  @media (hover: hover) and (pointer: fine) {
+    details.run:not([open]) > summary:hover {
+      background: rgba(255, 255, 255, 0.07);
+    }
+  }
+
+  tr.row-candidate td {
+    background: #4a3d28;
+    color: #f5f5f7;
+  }
+
+  tr.row-security td {
+    background: #7a3a40;
+    color: #f5f5f7;
+  }
+
+  table.stack td::before {
+    color: #aeaeb2;
+  }
+
+  table.stack tr.row-candidate td::before,
+  table.stack tr.row-security td::before {
+    color: inherit;
   }
 
   button {
@@ -548,8 +696,11 @@ pre {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+
   button:active:not(:disabled) {
     transform: none;
-    transition: none;
   }
 }

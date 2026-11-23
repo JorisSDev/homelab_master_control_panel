@@ -30,7 +30,6 @@ const fixture: ViewState = {
     cards: [
       { id: "update", title: "Update", status: "Idle", detail: "Last report: dry run." },
       { id: "scan", title: "Scan", status: "Idle", detail: "Last report: clean." },
-      { id: "health", title: "Health", status: "All right", detail: "Load 0.4" },
       { id: "panel", title: "Panel", status: "dev", detail: "This copy of the panel." },
     ],
   },
@@ -81,16 +80,39 @@ const fixture: ViewState = {
   },
   panel: { version: "dev", latest: "v0.4.0", update_available: true, error: "" },
   services: {
-    purpose: "The guests this host already runs.",
-    status: "Running",
-    summary: "2 running",
-    rows: [{ id: "201", name: "media", kind: "container", status: "Running", url: "http://10.0.0.30:32400/web" }],
+    purpose: "Configured guests and the services inside them.",
+    status: "Needs a look",
+    summary: "1 stopped",
+    rows: [
+      {
+        id: "201",
+        name: "media",
+        kind: "container",
+        status: "Running",
+        url: "http://10.0.0.30:32400/web",
+        services: ["nginx", "nextcloud:apache"],
+        cpu: "12%",
+        memory: "1.0 GB / 2.0 GB",
+        disk: "3.0 GB / 8.0 GB",
+      },
+      {
+        id: "216",
+        name: "house",
+        kind: "vm",
+        status: "Stopped",
+        url: "",
+        services: [],
+        cpu: "",
+        memory: "",
+        disk: "",
+      },
+    ],
   },
   storage: {
     purpose: "Free space on the host, the disk shelf, and the guest disks.",
     status: "Room to spare",
     summary: "20.0 GB free on /",
-    rows: [{ label: "/", kind: "mount", free: "20.0 GB", total: "32.0 GB", status: "Room", low: false }],
+    rows: [{ label: "/", kind: "mount", free: "20.0 GB", total: "32.0 GB", status: "Room", low: false, detail: "" }],
   },
   findings: {
     purpose: "What the last scan or update left behind.",
@@ -108,7 +130,7 @@ const fixture: ViewState = {
       },
     ],
   },
-  packages: { checked: false, total: null, security: null, pending: null, names: [], error: "" },
+  packages: { checked: false, total: null, security: null, pending: null, names: [], upgrades: [], error: "" },
 };
 
 describe("maintenance page", () => {
@@ -119,9 +141,10 @@ describe("maintenance page", () => {
     expect(html).not.toContain("Unfinished");
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
-    for (const label of ["Home", "Findings", "Services", "Storage", "Update", "Scan", "Health", "Panel"]) {
+    for (const label of ["Home", "Findings", "Containers", "Storage", "Update", "Scan", "Panel"]) {
       expect(html).toContain(`>${label}<`);
     }
+    expect(html).not.toContain(">Health<");
     expect(html).toContain("Last report: clean.");
     expect(html).not.toContain("Run the scan");
     expect(html).not.toContain("restart playback");
@@ -158,15 +181,73 @@ describe("maintenance page", () => {
 
   it("keeps the update confirmation behind a second button", () => {
     const html = renderToStaticMarkup(<App initial={fixture} live={false} initialSection="update" />);
-    expect(html).toContain("It restarts playback.");
-    expect(html).toContain("7 Debian security packages");
-    expect(html).toContain("Run the update");
+    expect(html.indexOf("Check for updates")).toBeLessThan(html.indexOf("Update all"));
+    expect(html).toContain("Update all");
+    expect(html).toContain("Check for updates");
+    expect(html).toContain("Not checked yet.");
+    expect(html).toContain("Next run");
     expect(html).not.toContain("Start the update");
-    expect(html).toContain("Check pending packages");
+    expect(html).not.toContain("restarts playback");
+    expect(html).not.toContain("The last report was a dry run");
+    expect(html).not.toContain("Asks what apt would upgrade");
+    expect(html).not.toContain("Transcript");
+    expect(html).toContain("Guest 201 · Packages");
+    expect(html).toContain("=== homelab-update start ===");
     expect(html).not.toContain("apt-get install");
-    const transcript = html.indexOf("Transcript");
-    expect(transcript).toBeGreaterThan(-1);
-    expect(transcript).toBeLessThan(html.indexOf("Guest 201 · Packages"));
+    expect(html).not.toContain("api/push");
+    expect(html).not.toContain("machineIdentifier");
+  });
+
+  it("names containers without an Open button", () => {
+    const html = renderToStaticMarkup(<App initial={fixture} live={false} initialSection="services" />);
+    expect(html).toContain(">Containers<");
+    expect(html).not.toContain(">Health<");
+    expect(html).toContain("CT 201");
+    expect(html).toContain("VM 216");
+    expect(html).toContain('href="http://10.0.0.30:32400/web"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+    expect(html).toContain("nextcloud:apache");
+    expect(html).toContain("—");
+    expect(html).not.toContain(">Open<");
+    expect(html).not.toContain('class="open"');
+    expect(html).not.toContain("api/push");
+    expect(html).not.toContain("machineIdentifier");
+    expect(html).not.toContain("apt-get install");
+  });
+
+  it("shows package versions after a check", () => {
+    const checked: ViewState = {
+      ...fixture,
+      packages: {
+        checked: true,
+        total: 2,
+        security: 1,
+        pending: 1,
+        names: ["openssl", "bash"],
+        error: "",
+        upgrades: [
+          { name: "openssl", current: "1.0", candidate: "1.1", security: true },
+          { name: "bash", current: "2.0", candidate: "2.1", security: false },
+        ],
+      },
+    };
+    const html = renderToStaticMarkup(<App initial={checked} live={false} initialSection="update" />);
+    expect(html).toContain("openssl");
+    expect(html).toContain("1.0");
+    expect(html).toContain("1.1");
+    expect(html).toContain("Security");
+    expect(html).toContain("Other");
+    expect(html).toContain("row-security");
+    expect(html).toContain("row-candidate");
+    expect(html).not.toContain(">Install<");
+    expect(html).not.toContain("apt-get install");
+    const waiting: ViewState = {
+      ...fixture,
+      packages: { ...fixture.packages, checked: true, total: 0, security: 0, pending: 0 },
+    };
+    const empty = renderToStaticMarkup(<App initial={waiting} live={false} initialSection="update" />);
+    expect(empty).toContain("Nothing is waiting.");
   });
 
   it("offers install only when a newer release exists", () => {

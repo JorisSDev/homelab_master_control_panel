@@ -49,7 +49,7 @@ export type Card = {
   detail: string;
 };
 
-export type Section = "home" | "findings" | "services" | "storage" | "update" | "scan" | "health" | "panel";
+export type Section = "home" | "findings" | "services" | "storage" | "update" | "scan" | "panel";
 
 export type ServiceRow = {
   id: string;
@@ -57,6 +57,10 @@ export type ServiceRow = {
   kind: string;
   status: string;
   url: string;
+  services: string[];
+  cpu: string;
+  memory: string;
+  disk: string;
 };
 
 export type StorageRow = {
@@ -66,6 +70,7 @@ export type StorageRow = {
   total: string;
   status: string;
   low: boolean;
+  detail: string;
 };
 
 export type Finding = {
@@ -77,12 +82,20 @@ export type Finding = {
   hidden_lines: number;
 };
 
+export type Upgrade = {
+  name: string;
+  current: string;
+  candidate: string;
+  security: boolean;
+};
+
 export type Packages = {
   checked: boolean;
   total: number | null;
   security: number | null;
   pending: number | null;
   names: string[];
+  upgrades: Upgrade[];
   error: string;
 };
 
