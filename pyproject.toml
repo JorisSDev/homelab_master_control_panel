@@ -1,0 +1,14 @@
+[project]
+name = "homelab-panel"
+version = "0.1.0"
+description = "Read-only maintenance view for a Proxmox host."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Joris Saulius" }]
+
+[project.scripts]
+homelab-panel = "homelab_panel.server:main"
+
+[tool.setuptools.packages.find]
+include = ["homelab_panel*"]

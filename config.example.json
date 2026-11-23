@@ -1,0 +1,57 @@
+{
+  "bind": "10.0.0.10:8090",
+  "cache_seconds": 5,
+  "refresh_seconds": 10,
+  "logs": {
+    "update": ["/var/log/homelab-update.log.1", "/var/log/homelab-update.log"],
+    "scan": ["/var/log/homelab-scan.log.1", "/var/log/homelab-scan.log"]
+  },
+  "events": ["/var/lib/homelab-maintain/events.jsonl.1", "/var/lib/homelab-maintain/events.jsonl"],
+  "vzdump_cron": "/etc/pve/vzdump.cron",
+  "services": {
+    "scan": "homelab-scan.service",
+    "update": "homelab-update.service"
+  },
+  "featured_timers": [
+    {
+      "unit": "homelab-scan.timer",
+      "note": "Daily leftover and ClamAV scan. It does not restart apps."
+    },
+    {
+      "unit": "homelab-update.timer",
+      "note": "Sunday package and Compose update. It restarts playback and recreates apps. There is no vzdump copy to roll back to."
+    },
+    {
+      "unit": "das-health.timer",
+      "note": "Disk check pushed to the status monitor every two minutes."
+    },
+    {
+      "unit": "pve-daily-update.timer",
+      "note": "Refreshes Proxmox package lists."
+    },
+    {
+      "unit": "apt-daily-upgrade.timer",
+      "note": "Debian's daily upgrade timer."
+    }
+  ],
+  "apt_daily_upgrade_unit": "apt-daily-upgrade.timer",
+  "plex": {
+    "guest_id": "201",
+    "identity_url": "http://10.0.0.30:32400/identity",
+    "minimum_version": "1.0.0.0",
+    "signin_url": "http://10.0.0.30:32400/web"
+  },
+  "wan_forward": "One TCP port stays the only intentional WAN forward.",
+  "no_vzdump": "There is no vzdump job. The media database exists only on guest 201.",
+  "address_prefix": "10.0.0.",
+  "vm": {
+    "id": "216",
+    "name": "house"
+  },
+  "compose_ids": ["208", "209"],
+  "guest_links": {
+    "201": ":32400/web",
+    "208": ":8080/",
+    "216": ":8123/"
+  }
+}
