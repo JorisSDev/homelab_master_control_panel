@@ -45,6 +45,7 @@ def load_config(path):
     host, port = parse_bind(os.environ.get("BIND") or data.get("bind") or "")
     data["bind_host"] = host
     data["bind_port"] = port
+    data["config_path"] = str(file.resolve())
     password = os.environ.get("PASSWORD")
     if password:
         data["password_hash"] = hash_password(password)

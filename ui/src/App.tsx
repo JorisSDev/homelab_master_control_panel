@@ -1,22 +1,30 @@
 import { useEffect, useState } from "react";
-import { History } from "./components/History";
 import { Login } from "./components/Login";
 import { Logo } from "./components/Logo";
-import { Now } from "./components/Now";
-import { Schedule } from "./components/Schedule";
-import type { ViewState } from "./types";
+import { Health, Home, PanelPage, ScanJob, UpdateJob } from "./components/Sections";
+import type { Section, ViewState } from "./types";
 
 type Props = {
   initial?: ViewState | null;
   live?: boolean;
+  initialSection?: Section;
 };
 
-export function App({ initial = null, live = true }: Props) {
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: "home", label: "Home" },
+  { id: "update", label: "Update" },
+  { id: "scan", label: "Scan" },
+  { id: "health", label: "Health" },
+  { id: "panel", label: "Panel" },
+];
+
+export function App({ initial = null, live = true, initialSection = "home" }: Props) {
   const [state, setState] = useState<ViewState | null>(initial);
   const [authed, setAuthed] = useState(initial != null);
   const [error, setError] = useState("");
   const [loginError, setLoginError] = useState("");
   const [signingIn, setSigningIn] = useState(false);
+  const [section, setSection] = useState<Section>(initialSection);
 
   useEffect(() => {
     if (!live) {
@@ -44,7 +52,8 @@ export function App({ initial = null, live = true }: Props) {
           setState(next);
           setAuthed(true);
           setError("");
-          const seconds = next.now.idle ? Math.max(1, next.refresh_seconds || 10) : 2;
+          const busy = !next.scan.idle || !next.update.idle;
+          const seconds = busy ? 2 : Math.max(1, next.refresh_seconds || 10);
           timer = window.setTimeout(tick, seconds * 1000);
         }
       } catch {
@@ -95,27 +104,39 @@ export function App({ initial = null, live = true }: Props) {
   }
 
   return (
-    <main className="wrap">
-      <header className="top">
-        <Logo />
-        <div>
+    <div className="shell">
+      <aside className="side">
+        <div className="brand">
+          <Logo />
           <h1>Master control panel</h1>
-          <p className="quiet">What the host is doing, and what it already did.</p>
         </div>
-        <button type="button" className="quiet-button" onClick={() => void signOut()}>
-          Sign out
-        </button>
-      </header>
-      {error ? <p className="bad">{error}</p> : null}
-      {state ? (
-        <>
-          <Now now={state.now} />
-          <Schedule schedule={state.schedule} />
-          <History history={state.history} />
-        </>
-      ) : (
-        <p className="quiet">Reading the host.</p>
-      )}
-    </main>
+        <nav>
+          {SECTIONS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              aria-current={section === item.id ? "page" : undefined}
+              onClick={() => setSection(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      </aside>
+      <main className="main">
+        {error ? <p className="bad">{error}</p> : null}
+        {state ? (
+          <>
+            {section === "home" ? <Home state={state} onOpen={setSection} /> : null}
+            {section === "update" ? <UpdateJob job={state.update} /> : null}
+            {section === "scan" ? <ScanJob job={state.scan} /> : null}
+            {section === "health" ? <Health health={state.health} /> : null}
+            {section === "panel" ? <PanelPage panel={state.panel} onSignOut={() => void signOut()} /> : null}
+          </>
+        ) : (
+          <p className="quiet">Reading the host.</p>
+        )}
+      </main>
+    </div>
   );
 }

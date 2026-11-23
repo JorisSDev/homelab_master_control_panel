@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import json
 import re
+import shutil
 import subprocess
 
 
@@ -48,6 +49,38 @@ def collect_snapshot(config, runner=run, reader=read_text):
         "scan_logs": [reader(path) for path in (logs.get("scan") or [])],
         "event_logs": [reader(path) for path in (config.get("events") or [])],
         "unattended_text": runner(["dpkg-query", "-W", "-f", "${Status}", "unattended-upgrades"]),
+        "host": read_host(reader),
+    }
+
+
+def read_host(reader=read_text):
+    meminfo = reader("/proc/meminfo")
+    if not meminfo.strip():
+        return {"load": "", "memory_used": 0, "memory_total": 0, "disk_free": 0, "disk_total": 0}
+    load_text = reader("/proc/loadavg")
+    load_parts = load_text.split()
+    load = load_parts[0] if load_parts else ""
+    memory = {}
+    for line in meminfo.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        parts = value.split()
+        if parts and parts[0].isdigit():
+            memory[key.strip()] = int(parts[0]) * 1024
+    total = memory.get("MemTotal", 0)
+    available = memory.get("MemAvailable", 0)
+    used = max(total - available, 0) if total else 0
+    try:
+        usage = shutil.disk_usage("/")
+    except OSError:
+        usage = None
+    return {
+        "load": load,
+        "memory_used": used,
+        "memory_total": total,
+        "disk_free": 0 if usage is None else usage.free,
+        "disk_total": 0 if usage is None else usage.total,
     }
 
 

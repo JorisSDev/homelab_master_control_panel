@@ -1,7 +1,8 @@
 """HTTP API and static file server.
 
 GET reads the page after sign-in. POST signs in, signs out, starts the scan,
-or starts the update after it is confirmed. Every other POST is refused.
+starts the update after it is confirmed, or installs a newer panel release.
+Every other POST is refused.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import re
 import threading
 import time
 import zipfile
@@ -19,6 +21,7 @@ from homelab_panel.actions import start_action, start_unit
 from homelab_panel.auth import clear_cookie, new_session, session_token, set_cookie, verify_password
 from homelab_panel.collect import collect_snapshot
 from homelab_panel.config import ConfigError, load_config
+from homelab_panel.self_update import UpdateError, describe, install_release
 from homelab_panel.state import build_state
 
 CACHE_SECONDS = 5
@@ -27,30 +30,68 @@ BODY_LIMIT = 4096
 
 
 class Panel:
-    def __init__(self, config, provider, assets, starter=None):
+    def __init__(self, config, provider, assets, starter=None, releases=None, installer=None):
         self.config = config
         self.provider = provider
         self.assets = assets
         self.starter = starter or start_unit
+        self.releases = releases
+        self.installer = installer
         self._lock = threading.Lock()
         self._at = 0.0
         self._state = None
+        self._release = None
+        self._release_at = 0.0
         self._sessions = {}
         self._failures = 0
         self._locked_until = 0.0
 
     def _ttl(self):
-        if self._state and not self._state["now"]["idle"]:
+        if self._state and (not self._state["scan"]["idle"] or not self._state["update"]["idle"]):
             return ACTIVE_CACHE_SECONDS
         return float(self.config.get("cache_seconds") or CACHE_SECONDS)
 
     def state(self):
         now = time.monotonic()
+        info = self._release_info(now)
         with self._lock:
             if self._state is None or now - self._at > self._ttl():
-                self._state = build_state(self.config, self.provider())
+                built = build_state(self.config, self.provider())
+                self._apply_release(built, info)
+                self._state = built
                 self._at = now
             return self._state
+
+    def _release_info(self, now):
+        if self.releases is None:
+            return None
+        with self._lock:
+            if self._release is not None and now - self._release_at <= 300:
+                return self._release
+        try:
+            info = self.releases(self.config)
+        except (UpdateError, OSError, ValueError):
+            info = {"latest": "", "update_available": False, "error": "Could not check GitHub."}
+        with self._lock:
+            self._release = info
+            self._release_at = now
+        return info
+
+    def _apply_release(self, state, info):
+        if not info:
+            return
+        state["panel"]["latest"] = info.get("latest") or ""
+        state["panel"]["update_available"] = bool(info.get("update_available"))
+        state["panel"]["error"] = info.get("error") or ""
+        for card in state["home"]["cards"]:
+            if card["id"] != "panel":
+                continue
+            if info.get("update_available"):
+                card["detail"] = "A newer release is ready."
+            elif info.get("latest"):
+                card["detail"] = "This is the latest release."
+            elif info.get("error"):
+                card["detail"] = info["error"]
 
     def handle(self, method, path, body=b"", headers=None):
         headers = headers or {}
@@ -64,6 +105,8 @@ class Panel:
                 return self._json(401, {"error": "Sign in is required."})
             if method == "POST" and clean in ("/api/actions/scan", "/api/actions/update"):
                 return self._action(clean, body)
+            if method == "POST" and clean == "/api/panel/update":
+                return self._panel_update()
             if method != "GET" or clean != "/api/state":
                 return 405, {"Allow": "GET"}, b""
         elif method != "GET":
@@ -97,6 +140,16 @@ class Panel:
             with self._lock:
                 self._state = None
                 self._at = 0.0
+        return self._json(status, result)
+
+    def _panel_update(self):
+        if self.installer is None:
+            return self._json(400, {"error": "This copy cannot install a release."})
+        try:
+            result = self.installer(self.config)
+        except UpdateError as exc:
+            return self._json(400, {"error": str(exc)})
+        status = 200 if result.get("status") == "current" else 202
         return self._json(status, result)
 
     def _json(self, status, payload, extra=None):
@@ -255,15 +308,26 @@ def _payload(body):
 
 
 def serve(config, provider=None, assets=None):
-    panel = Panel(config, provider or (lambda: collect_snapshot(config)), assets or assets_from_runtime())
+    panel = Panel(
+        config,
+        provider or (lambda: collect_snapshot(config)),
+        assets or assets_from_runtime(),
+        releases=lambda cfg: describe(cfg),
+        installer=lambda cfg: install_release(cfg, wait=False),
+    )
     server = ThreadingHTTPServer((config["bind_host"], config["bind_port"]), make_handler(panel))
     server.serve_forever()
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Homelab maintenance page")
-    parser.add_argument("--config", required=True)
+    parser = argparse.ArgumentParser(description="Homelab master control panel")
+    parser.add_argument("--config")
+    parser.add_argument("--update", action="store_true")
     args = parser.parse_args(argv)
+    if args.update:
+        return _update(args.config)
+    if not args.config:
+        raise SystemExit("--config is required")
     try:
         config = load_config(args.config)
     except ConfigError as exc:
@@ -271,6 +335,36 @@ def main(argv=None):
     if not config.get("password_hash"):
         raise SystemExit("config needs a password_hash")
     serve(config)
+
+
+def _update(config_path):
+    if config_path:
+        try:
+            config = load_config(config_path)
+        except ConfigError as exc:
+            raise SystemExit(str(exc)) from exc
+    else:
+        config = {"config_path": _config_path_from_unit(Path("/etc/systemd/system/homelab-panel.service"))}
+    try:
+        result = install_release(config, wait=True)
+    except UpdateError as exc:
+        raise SystemExit(str(exc)) from exc
+    if result["status"] == "current":
+        print(f"Already running {result['version']}")
+    else:
+        print(f"Installed {result['version']}")
+    return 0
+
+
+def _config_path_from_unit(path):
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        raise SystemExit("The panel service is not installed.") from exc
+    match = re.search(r"--config\s+(\S+)", text)
+    if not match:
+        raise SystemExit("The panel service has no config path.")
+    return match.group(1)
 
 
 if __name__ == "__main__":

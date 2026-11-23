@@ -80,9 +80,11 @@ class ApiTests(unittest.TestCase):
         payload = json.loads(body)
         self.assertNotIn("machineIdentifier", body.decode())
         self.assertNotIn("secret-id", body.decode())
-        self.assertIn("now", payload)
-        self.assertIn("schedule", payload)
-        self.assertIn("history", payload)
+        self.assertIn("home", payload)
+        self.assertIn("update", payload)
+        self.assertIn("scan", payload)
+        self.assertIn("health", payload)
+        self.assertIn("panel", payload)
         self.assertNotIn("unfinished", payload)
         panel.handle("GET", "/api/state", headers=cookie)
         self.assertEqual(calls["n"], 1)
@@ -223,3 +225,42 @@ class ApiTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_panel_update_is_signed_in_and_uses_the_shared_installer(self):
+        calls = []
+
+        def provider():
+            return {
+                "timers": [],
+                "scan_active": False,
+                "update_active": False,
+                "update_logs": [],
+                "scan_logs": [],
+                "event_logs": [],
+                "unattended_text": "",
+            }
+
+        class Missing:
+            def get(self, url_path):
+                return None
+
+        panel = Panel(
+            {"cache_seconds": 5, "featured_timers": [], "password_hash": PASSWORD_HASH},
+            provider,
+            Missing(),
+            starter=lambda command: calls.append(("start", command)) or 0,
+            releases=lambda config: {"latest": "v0.4.0", "update_available": True, "error": ""},
+            installer=lambda config: calls.append("install") or {"status": "installed", "version": "v0.4.0"},
+        )
+        status, _, _ = panel.handle("POST", "/api/panel/update", b"")
+        self.assertEqual(status, 401)
+        status, headers, _ = panel.handle("POST", "/api/login", b'{"password":"example"}')
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        status, _, body = panel.handle("GET", "/api/state", headers=cookie)
+        payload = json.loads(body)
+        self.assertEqual(payload["panel"]["latest"], "v0.4.0")
+        self.assertTrue(payload["panel"]["update_available"])
+        status, _, body = panel.handle("POST", "/api/panel/update", b"", cookie)
+        self.assertEqual(status, 202)
+        self.assertEqual(calls, ["install"])
+        self.assertNotIn("homelab-scan", body.decode())

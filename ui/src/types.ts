@@ -1,33 +1,9 @@
-export type Job = {
-  label: string;
-  since: string;
-  started: string;
-  elapsed: string;
-};
-
-export type Step = {
-  step: string;
-  guest: string;
-};
-
 export type TimelineStep = {
   text: string;
   current: boolean;
   guest: string;
   step: string;
   elapsed: string;
-};
-
-export type Now = {
-  idle: boolean;
-  status: string;
-  detail: string;
-  text: string;
-  jobs: Job[];
-  step: Step | null;
-  timeline: TimelineStep[];
-  waiting: boolean;
-  lock: string;
 };
 
 export type TimerRow = {
@@ -46,15 +22,56 @@ export type Run = {
   hidden_lines: number;
 };
 
+export type JobView = {
+  purpose: string;
+  idle: boolean;
+  status: string;
+  detail: string;
+  summary: string;
+  next: string;
+  note: string;
+  started: string;
+  elapsed: string;
+  timeline: TimelineStep[];
+  waiting: boolean;
+  lock: string;
+  history: Run[];
+  security: number | null;
+  pending: number | null;
+  dry: boolean;
+  last_result: string;
+};
+
+export type Card = {
+  id: Section;
+  title: string;
+  status: string;
+  detail: string;
+};
+
+export type Section = "home" | "update" | "scan" | "health" | "panel";
+
 export type ViewState = {
   refresh_seconds: number;
-  now: Now;
-  schedule: {
-    featured: TimerRow[];
+  home: { cards: Card[] };
+  update: JobView;
+  scan: JobView;
+  health: {
+    purpose: string;
+    status: string;
+    summary: string;
+    load: string;
+    memory_used: string;
+    memory_total: string;
+    disk_free: string;
+    disk_total: string;
+    disk_check: { next: string; last: string };
     housekeeping: TimerRow[];
   };
-  history: {
-    update: Run[];
-    scan: Run[];
+  panel: {
+    version: string;
+    latest: string;
+    update_available: boolean;
+    error: string;
   };
 };

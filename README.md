@@ -1,16 +1,24 @@
 # Homelab maintenance panel
 
-A local view of what a Proxmox host is doing, and what it already did. The page is called Master control panel. It shows the running job, the host timers, and the update and scan history. Sign in is required. It can start the scan, and it can start the update after a confirmation that says the update restarts playback. It cannot stop a guest, change the firewall, or move the timers.
+A local control panel for the jobs a Proxmox host already runs. The page is called Master control panel. Home shows Update, Scan, Health, and this panel. Sign in is required. It can start the scan, and it can start the update after a confirmation that says the update restarts playback. It cannot stop a guest, change the firewall, or move the timers.
 
 The runtime is Python 3 from the standard library. The page is a React application, built ahead of time and packed into the same zipapp. The host does not need Node, a virtualenv, or another container.
 
-## What the page reads
+## Sections
 
-The process binds to the single address in its config. It refuses `0.0.0.0` and `::`. It reads systemd timers, the maintenance logs, and an optional event file. Guest addresses come from the host. UI paths, timer notes, and the identity check live in the config file, which stays on the host.
-
-`config.example.json` uses fictional addresses. Copy it and replace the values. Do not commit a config that names a real network.
+- **Home.** One line for each job.
+- **Update.** Installs host packages and recreates Compose apps. It restarts playback. The counts come from the last report.
+- **Scan.** Checks leftover files and runs ClamAV. It does not restart apps.
+- **Health.** Load, memory, and free space on `/`, plus the disk-check timer. Other host timers stay in a closed list.
+- **Panel.** The installed version, the latest GitHub release, and Install when they differ. Sign out is here.
 
 Pending package counts come from the last update report. The page does not simulate package upgrades on refresh.
+
+## What the page reads
+
+The process binds to the single address in its config. It refuses `0.0.0.0` and `::`. It reads systemd timers, the maintenance logs, load, memory, disk space, and an optional event file. UI paths and timer notes live in the config file, which stays on the host.
+
+`config.example.json` uses fictional addresses. Copy it and replace the values. Do not commit a config that names a real network.
 
 ## Event lines
 
@@ -35,13 +43,13 @@ npm test
 npm run dev
 ```
 
-`npm run dev` starts the API and the page. Open the URL it prints.
+`npm run dev` starts the API and the page. Open the URL it prints. The example password is `example`.
 
 ## Release
 
-Tag `vX.Y.Z`. GitHub Actions tests the parsers and the page, builds the UI, and publishes `homelab-panel.pyz` with its sha256.
+Tag `vX.Y.Z`. GitHub Actions tests the parsers and the page, builds the UI, and publishes `homelab-panel.pyz` with its sha256. The tag is written into that zipapp.
 
-Install that exact file under a versioned directory and record the tag beside it. Point the service at that path. A later update is a newer tag in a new directory. Do not track the default branch on the host, and do not edit the installed file in place.
+The first install of a release uses the published file. Check the sha256, keep the previous directory, and point the service at the new file.
 
 ```sh
 install -d /opt/homelab-panel/X.Y.Z
@@ -51,6 +59,13 @@ curl -fsSL -o /opt/homelab-panel/X.Y.Z/homelab-panel.pyz.sha256 \
   https://github.com/JorisSDev/homelab_master_control_panel/releases/download/vX.Y.Z/homelab-panel.pyz.sha256
 sha256sum -c homelab-panel.pyz.sha256
 printf '%s\n' vX.Y.Z > /var/lib/homelab-panel/installed-version
+ln -sfn /opt/homelab-panel/X.Y.Z /opt/homelab-panel/current
 ```
 
-The service runs `/usr/bin/python3` on that zipapp with `--config` pointing at the host config. The host config names `scan_unit`, `update_unit`, and `password_hash`. The example config signs in with the password `example`. Set `PASSWORD` in the environment to replace that hash at startup. The page is HTTP on one LAN address, so the sign-in protects the actions from the rest of the network rather than from someone who can already read that address.
+After that copy is running, a newer release installs from the Panel page or with one command. Both use the same installer. It checks the sha256, keeps the previous directory, and restarts only the panel service.
+
+```sh
+python3 /opt/homelab-panel/current/homelab-panel.pyz --update
+```
+
+The service runs `/usr/bin/python3` on the zipapp with `--config` pointing at the host config. The host config names `scan_unit`, `update_unit`, and `password_hash`. Set `PASSWORD` in the environment to replace the example hash at startup. The page is HTTP on one LAN address, so the sign-in protects the actions from the rest of the network rather than from someone who can already read that address.

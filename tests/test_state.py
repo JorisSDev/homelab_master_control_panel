@@ -95,24 +95,29 @@ class StateTests(unittest.TestCase):
 
     def test_schedule_hides_housekeeping_and_notes_the_missing_package(self):
         state = build_state(CONFIG, snapshot())
-        units = [row["unit"] for row in state["schedule"]["featured"]]
-        self.assertEqual(units, ["homelab-scan.timer", "homelab-update.timer", "apt-daily-upgrade.timer"])
-        self.assertIn("restarts playback", state["schedule"]["featured"][1]["note"])
-        self.assertIn("no vzdump", state["schedule"]["featured"][1]["note"])
-        self.assertIn("unattended-upgrades is not installed", state["schedule"]["featured"][2]["note"])
-        self.assertEqual(state["schedule"]["housekeeping"][0]["unit"], "man-db.timer")
+        rows = {row["unit"]: row for row in state["health"]["housekeeping"]}
+        self.assertIn("restarts playback", state["update"]["purpose"])
+        self.assertIn("restarts playback", state["update"]["note"])
+        self.assertIn("no vzdump", state["update"]["note"])
+        self.assertIn("unattended-upgrades is not installed", rows["apt-daily-upgrade.timer"]["note"])
+        self.assertIn("man-db.timer", rows)
+        self.assertNotIn("homelab-scan.timer", rows)
+        self.assertNotIn("homelab-update.timer", rows)
 
     def test_history_keeps_the_interrupted_pass_and_prefers_events(self):
         events = '{"ts":"2026-01-02T04:06:30+00:00","job":"scan","kind":"step","guest":"201","step":"clamav"}\n'
         state = build_state(CONFIG, snapshot(event_logs=[events]))
-        scan = state["history"]["scan"]
+        scan = state["scan"]["history"]
         self.assertEqual(scan[0]["result"], "clean")
         self.assertIn("35 min", scan[0]["heading"])
         self.assertEqual(scan[0]["steps"], ["Guest 201 · Malware scan"])
         self.assertIn("=== homelab-scan start 2026-01-02T04:05:00+00:00 ===", scan[0]["transcript"])
         self.assertEqual(scan[1]["result"], "host example finding")
         self.assertNotIn("min", scan[1]["heading"])
-        self.assertIn("dry run", state["history"]["update"][0]["heading"])
+        self.assertIn("dry run", state["update"]["history"][0]["heading"])
+        self.assertEqual(state["update"]["security"], 7)
+        self.assertEqual(state["update"]["pending"], 4)
+        self.assertTrue(state["update"]["dry"])
         self.assertNotIn("unfinished", state)
         self.assertNotIn("machineIdentifier", json.dumps(state))
 
@@ -129,17 +134,17 @@ class StateTests(unittest.TestCase):
             ),
             now=datetime.datetime.fromtimestamp(1_767_000_300, datetime.timezone.utc),
         )
-        self.assertFalse(state["now"]["idle"])
-        self.assertEqual(state["now"]["status"], "Scan running")
-        self.assertEqual(state["now"]["detail"], "Malware scan on guest 201")
-        self.assertEqual(state["now"]["step"], {"step": "clamav", "guest": "201"})
-        self.assertEqual(state["now"]["jobs"][0]["elapsed"], "5 min")
-        self.assertEqual(state["now"]["jobs"][0]["started"], "04:05")
-        self.assertEqual(state["now"]["timeline"][0]["text"], "Guest 201 · Malware scan")
-        self.assertEqual(state["now"]["timeline"][0]["current"], True)
-        self.assertEqual(state["now"]["timeline"][0]["guest"], "201")
-        self.assertEqual(state["now"]["timeline"][0]["elapsed"], "5 min")
-        self.assertIn("update waits", state["now"]["lock"])
+        self.assertFalse(state["scan"]["idle"])
+        self.assertEqual(state["scan"]["status"], "Scan running")
+        self.assertEqual(state["scan"]["detail"], "Malware scan on guest 201")
+        self.assertEqual(state["scan"]["elapsed"], "5 min")
+        self.assertEqual(state["scan"]["started"], "04:05")
+        self.assertEqual(state["scan"]["timeline"][0]["text"], "Guest 201 · Malware scan")
+        self.assertEqual(state["scan"]["timeline"][0]["current"], True)
+        self.assertEqual(state["scan"]["timeline"][0]["guest"], "201")
+        self.assertEqual(state["scan"]["timeline"][0]["elapsed"], "5 min")
+        self.assertIn("update waits", state["scan"]["lock"])
+        self.assertEqual(state["update"]["status"], "Waiting")
 
     def test_open_run_marks_only_the_current_step(self):
         log = "=== homelab-scan start 2026-01-02T04:05:00+00:00 ===\n-- CT 201 leftovers --\n"
@@ -160,7 +165,7 @@ class StateTests(unittest.TestCase):
             ),
             now=datetime.datetime.fromtimestamp(1_767_000_300, datetime.timezone.utc),
         )
-        marked = [(item["text"], item["current"]) for item in state["now"]["timeline"]]
+        marked = [(item["text"], item["current"]) for item in state["scan"]["timeline"]]
         self.assertEqual(
             marked,
             [("Guest 201 · Leftover files", False), ("Guest 201 · Malware scan", True)],
@@ -168,7 +173,34 @@ class StateTests(unittest.TestCase):
 
     def test_idle_copy_and_guest_rows(self):
         state = build_state(CONFIG, snapshot())
-        self.assertTrue(state["now"]["idle"])
-        self.assertEqual(state["now"]["status"], "Idle")
-        self.assertEqual(state["now"]["timeline"], [])
-        self.assertIn("Nothing is running", state["now"]["text"])
+        self.assertTrue(state["scan"]["idle"])
+        self.assertTrue(state["update"]["idle"])
+        self.assertEqual(state["scan"]["status"], "Idle")
+        self.assertEqual(state["scan"]["timeline"], [])
+        self.assertIn("Last report", state["scan"]["detail"])
+        self.assertEqual([card["id"] for card in state["home"]["cards"]], ["update", "scan", "health", "panel"])
+
+    def test_health_reads_load_memory_and_disk(self):
+        state = build_state(
+            CONFIG,
+            snapshot(
+                host={
+                    "load": "0.40",
+                    "memory_used": 8 * 1024 ** 3,
+                    "memory_total": 16 * 1024 ** 3,
+                    "disk_free": 20 * 1024 ** 3,
+                    "disk_total": 32 * 1024 ** 3,
+                }
+            ),
+        )
+        self.assertEqual(state["health"]["status"], "All right")
+        self.assertIn("Load 0.40", state["health"]["summary"])
+        self.assertIn("8.0 GB", state["health"]["summary"])
+        self.assertEqual(state["health"]["disk_free"], "20.0 GB")
+
+    def test_low_disk_is_called_out(self):
+        state = build_state(
+            CONFIG,
+            snapshot(host={"load": "1.0", "memory_used": 1024, "memory_total": 2048, "disk_free": 1, "disk_total": 100}),
+        )
+        self.assertEqual(state["health"]["status"], "Low on disk")

@@ -1,12 +1,12 @@
 import { Disclosure } from "./Disclosure";
 import type { Run } from "../types";
 
-function Runs({ title, runs }: { title: string; runs: Run[] }) {
+export function Runs({ title, runs }: { title: string; runs: Run[] }) {
   return (
     <>
       <h3>{title}</h3>
       {runs.length === 0 ? (
-        <p className="quiet">No {title.toLowerCase()} log yet.</p>
+        <p className="quiet">No report yet.</p>
       ) : (
         runs.map((run) => (
           <article key={run.heading} className="run">
@@ -31,17 +31,5 @@ function Runs({ title, runs }: { title: string; runs: Run[] }) {
         ))
       )}
     </>
-  );
-}
-
-export function History({ history }: { history: { update: Run[]; scan: Run[] } }) {
-  const empty = history.update.length === 0 && history.scan.length === 0;
-  return (
-    <section>
-      <h2>History</h2>
-      <Runs title="Update" runs={history.update} />
-      <Runs title="Scan" runs={history.scan} />
-      {empty ? <p className="quiet">The timers have not written a log yet.</p> : null}
-    </section>
   );
 }

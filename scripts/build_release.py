@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import sys
 import tempfile
@@ -29,6 +30,8 @@ def main():
         shutil.copytree(ROOT / "homelab_panel", stage / "homelab_panel", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         shutil.copytree(dist, stage / "ui" / "dist")
         (stage / "__main__.py").write_text(MAIN)
+        version = os.environ.get("PANEL_VERSION", "dev").strip() or "dev"
+        (stage / "homelab_panel" / "VERSION").write_text(version + "\n")
         zipapp.create_archive(stage, destination, interpreter="/usr/bin/python3", compressed=True)
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     checksum = destination.with_suffix(destination.suffix + ".sha256")

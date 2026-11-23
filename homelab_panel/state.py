@@ -8,6 +8,7 @@ import re
 from homelab_panel.parse_events import format_step, parse_events, steps_for_run
 from homelab_panel.parse_logs import duration_between, parse_runs
 from homelab_panel.parse_timers import format_when, parse_timers
+from homelab_panel.self_update import current_version
 
 STEP_NAMES = {
     "freshclam": "Virus definitions",
@@ -36,14 +37,25 @@ def build_state(config, snapshot, now=None):
     running = _running(snapshot)
     step = _current_step(events, {item["job"] for item in running})
     upgrades_active = "installed" in (snapshot.get("unattended_text") or "")
+    schedule = _schedule(config, timers, upgrades_active)
+    update = _job("update", running, step, clock, update_runs, schedule)
+    scan = _job("scan", running, step, clock, scan_runs, schedule)
+    health = _health(snapshot, schedule)
+    panel = {"version": current_version(), "latest": "", "update_available": False, "error": ""}
     return {
         "refresh_seconds": int(config.get("refresh_seconds") or 10),
-        "now": _now(running, step, clock, update_runs, scan_runs),
-        "schedule": _schedule(config, timers, upgrades_active),
-        "history": {
-            "update": [_run_view(run) for run in reversed(update_runs[-8:])],
-            "scan": [_run_view(run) for run in reversed(scan_runs[-8:])],
+        "home": {
+            "cards": [
+                {"id": "update", "title": "Update", "status": update["status"], "detail": update["summary"]},
+                {"id": "scan", "title": "Scan", "status": scan["status"], "detail": scan["summary"]},
+                {"id": "health", "title": "Health", "status": health["status"], "detail": health["summary"]},
+                {"id": "panel", "title": "Panel", "status": panel["version"], "detail": "This copy of the panel."},
+            ]
         },
+        "update": update,
+        "scan": scan,
+        "health": health,
+        "panel": panel,
     }
 
 
@@ -151,15 +163,6 @@ def _activity(step):
     return f"{label} on guest {guest}"
 
 
-def _status(running):
-    jobs = {item["job"] for item in running}
-    if jobs == {"scan"}:
-        return "Scan running"
-    if jobs == {"update"}:
-        return "Update running"
-    return "Jobs running"
-
-
 def _lock(running):
     jobs = {item["job"] for item in running}
     if jobs == {"scan"}:
@@ -174,51 +177,123 @@ def _clock(since):
     return match.group(1) if match else ""
 
 
-def _now(running, step, clock, update_runs, scan_runs):
-    if not running:
-        detail = "Nothing is running. The next scan and the next update are in the schedule."
-        return {
-            "idle": True,
-            "status": "Idle",
-            "detail": detail,
-            "text": detail,
-            "jobs": [],
-            "step": None,
-            "timeline": [],
-            "waiting": False,
-            "lock": "",
-        }
-    runs_for = {"update": update_runs, "scan": scan_runs}
-    jobs = []
-    timeline = []
-    for item in running:
-        elapsed = _elapsed(item["started_us"], clock)
-        jobs.append(
-            {
-                "label": item["label"],
-                "since": item["since"],
-                "started": _clock(item["since"]),
-                "elapsed": elapsed,
-            }
-        )
-        timeline.extend(_timeline(runs_for[item["job"]], item["job"], step, elapsed))
-    visible = None
-    if step:
-        visible = {
-            "step": step.get("step") or "working",
-            "guest": step.get("guest") or "host",
-        }
-    waiting = step is None
+def _job(kind, running, step, clock, runs, schedule):
+    mine = next((item for item in running if item["job"] == kind), None)
+    other = [item for item in running if item["job"] != kind]
+    elapsed = _elapsed(mine["started_us"], clock) if mine else ""
+    timeline = _timeline(runs, kind, step, elapsed) if mine else []
+    history = [_run_view(run) for run in reversed(runs[-8:])]
+    last = runs[-1] if runs else None
+    timer = _timer_row(schedule, "homelab-update.timer" if kind == "update" else "homelab-scan.timer")
+    if kind == "update":
+        purpose = "Installs host packages and recreates Compose apps. It restarts playback."
+        idle_status = "Idle"
+    else:
+        purpose = "Checks leftover files and runs ClamAV. It does not restart apps."
+        idle_status = "Idle"
+    if mine:
+        status = "Update running" if kind == "update" else "Scan running"
+        detail = _activity(step if step and step.get("job") == kind else None)
+        summary = detail
+    elif other:
+        status = "Waiting"
+        detail = _lock(running)
+        summary = detail
+    else:
+        status = idle_status
+        detail = _last_sentence(kind, last)
+        summary = detail
     return {
-        "idle": False,
-        "status": _status(running),
-        "detail": _activity(step),
-        "text": "",
-        "jobs": jobs,
-        "step": visible,
+        "purpose": purpose,
+        "idle": mine is None,
+        "status": status,
+        "detail": detail,
+        "summary": summary,
+        "next": timer.get("next") or "not scheduled",
+        "note": timer.get("note") or "",
+        "started": _clock(mine["since"]) if mine else "",
+        "elapsed": elapsed,
         "timeline": timeline,
-        "waiting": waiting,
-        "lock": _lock(running),
+        "waiting": bool(mine) and (step is None or step.get("job") != kind),
+        "lock": _lock(running) if running else "",
+        "history": history,
+        "security": None if not last else last.get("security"),
+        "pending": None if not last else last.get("pending"),
+        "dry": bool(last and last.get("dry")),
+        "last_result": "" if not last else last.get("result") or "",
+    }
+
+
+def _timer_row(schedule, unit):
+    for row in schedule["featured"] + schedule["housekeeping"]:
+        if row["unit"] == unit:
+            return row
+    return {}
+
+
+def _last_sentence(kind, last):
+    if not last:
+        if kind == "update":
+            return "No update report yet."
+        return "No scan report yet."
+    if kind == "update" and last.get("security") is not None:
+        sentence = f"Last report: {last['result']}."
+        sentence += f" {last['security']} Debian security packages."
+        if last.get("pending") is not None:
+            sentence += f" {last['pending']} other host packages stayed pending."
+        return sentence
+    return f"Last report: {last.get('result') or 'incomplete'}."
+
+
+def _size(value):
+    number = int(value or 0)
+    if number <= 0:
+        return ""
+    gib = number / (1024 ** 3)
+    if gib >= 1:
+        return f"{gib:.1f} GB"
+    return f"{number / (1024 ** 2):.0f} MB"
+
+
+def _health(snapshot, schedule):
+    host = snapshot.get("host") or {}
+    load = str(host.get("load") or "")
+    memory_used = _size(host.get("memory_used"))
+    memory_total = _size(host.get("memory_total"))
+    disk_free = _size(host.get("disk_free"))
+    disk_total = _size(host.get("disk_total"))
+    disk_timer = _timer_row(schedule, "das-health.timer")
+    names = {"homelab-scan.timer", "homelab-update.timer", "das-health.timer"}
+    housekeeping = [row for row in schedule["featured"] + schedule["housekeeping"] if row["unit"] not in names]
+    if not any((load, memory_total, disk_total)):
+        status = "Not reported"
+        summary = "This copy cannot read the host."
+    else:
+        free = int(host.get("disk_free") or 0)
+        total = int(host.get("disk_total") or 0)
+        status = "Low on disk" if total and free / total < 0.1 else "All right"
+        parts = []
+        if load:
+            parts.append(f"Load {load}")
+        if memory_used and memory_total:
+            parts.append(f"{memory_used} of {memory_total} memory in use")
+        if disk_free and disk_total:
+            parts.append(f"{disk_free} free of {disk_total}")
+        summary = " · ".join(parts)
+    return {
+        "purpose": "Is the host itself all right.",
+        "status": status,
+        "summary": summary,
+        "load": load,
+        "memory_used": memory_used,
+        "memory_total": memory_total,
+        "disk_free": disk_free,
+        "disk_total": disk_total,
+        "disk_check": {
+            "next": disk_timer.get("next") or "not scheduled",
+            "last": disk_timer.get("last") or "no run yet",
+        },
+        "housekeeping": housekeeping,
     }
 
 
