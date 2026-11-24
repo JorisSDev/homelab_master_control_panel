@@ -1,25 +1,53 @@
-# Homelab maintenance panel
+# Master control panel
 
-A local control panel for the jobs a Proxmox host already runs. The page is called Master control panel. Home is the logo. Findings are on that page, with the running guests and a line for the next scan, the next update, storage, and this panel. Sign in is required. It can start the scan, and it can start the Sunday update after a confirmation that says the update restarts playback. Check for updates does not install anything. Update on a row upgrades that container. It cannot stop a guest, change the firewall, or move the timers.
+The LAN page for the Proxmox root administrator. It gathers the facts that otherwise take a terminal, and it runs the routine actions behind those facts. Sign-in is required. The process binds to one address and refuses `0.0.0.0` and `::`.
 
-The runtime is Python 3 from the standard library. The page is a React application, built ahead of time and packed into the same zipapp. The host does not need Node, a virtualenv, or another container.
+Proxmox remains the place to start, stop, open a console, snapshot, and firewall a guest. Each service keeps its own web application. Uptime Kuma remains the place to add and edit monitors. This panel links to those tools and shows their current result.
 
-## Sections
+## Pages
 
-- **Home.** The logo opens this page. Findings are on that page. A status line opens the next scan, the next update, storage, and the panel version. Running guests are listed under that.
-- **Containers.** Each configured guest, its status, and the services running inside it. A name with an address is a link. Filter matches a name, an id, or a service.
-- **Storage.** Free space on the host mounts and the guest disks. A mount that is filling up is called out. An unmounted disk is listed as not mounted.
-- **Update.** Lists each guest. Host packages stay in a closed disclosure. Check for updates does not install. Update on a row upgrades that container. Update all is still the Sunday job.
-- **Scan.** Checks leftover files and runs ClamAV. It does not restart apps.
-- **Panel.** The installed version, the latest GitHub release, and Install when they differ. Sign out is here.
+- **Overview.** What needs a person, what changed since the last visit, four host figures, the next two days, a job that is running, and a short chronology.
+- **Guests.** Every container and virtual machine, in boot order or by address. A guest opens a dossier with its resources, blast radius, and links out.
+- **Reach.** LAN name, public name, and the latest Uptime Kuma result on one row. Pinned rows cover the tunnel, the WAN port, DNS pins, and multicast snooping.
+- **Storage.** Free space, the disk-shelf dossier, and the protection matrix.
+- **Jobs.** The week clock, the security scan, and the Sunday update preview.
+- **System.** The installed version, Install, the operator log, a redacted report, and Sign out. It opens from the version in the sidebar.
+- **Recovery.** A live checklist at `/recovery`, offered after a short uptime. It is not in the sidebar.
 
-Check for updates runs only when you press the button. Refresh does not simulate an upgrade or check a guest.
+Paths are `/`, `/guests`, `/guests/<id>`, `/reach`, `/storage`, `/jobs`, `/jobs/scan`, `/jobs/update`, `/recovery`, and `/system`.
+
+## Actions
+
+- Run the scan. It does not restart applications.
+- Check pending packages. The check does not install anything.
+- Update one running container after confirmation.
+- Start the Sunday update after a confirmation that names the effect: packages install, Compose apps are recreated, playback restarts when that is what the host job does, and there is no vzdump rollback while no backup job exists.
+- Dry-run the Sunday update when `update_script` is set.
+- Run the disk check when `disk_unit` is set.
+- Check DNS pins and service paths.
+- Install a newer panel release.
+
+The panel does not start or stop a guest, open a shell, or edit the firewall.
 
 ## What the page reads
 
-The process binds to the single address in its config. It refuses `0.0.0.0` and `::`. It reads systemd timers, the maintenance logs, load, memory, disk space, and an optional event file. UI paths and timer notes live in the config file, which stays on the host.
+systemd timers, the maintenance logs, load, memory, disk space, guest configs, and an optional event file. UI paths and timer notes live in the config file on the host.
 
 `config.example.json` uses fictional addresses. Copy it and replace the values. Do not commit a config that names a real network.
+
+Optional keys, all safe to omit:
+
+- `roles` maps a guest id to a short role.
+- `paths` lists `{name, guest, lan, public}` for the Reach table.
+- `kuma.guest_id` is the container whose local Uptime Kuma database is read. The query asks for monitor name, type, and the latest status only.
+- `das.uuid`, `das.mount`, and `das.monitor` describe the disk shelf.
+- `disk_unit` is the systemd unit for Run disk check.
+- `tunnel.guest_id` is the container that runs cloudflared.
+- `wan.port` and `wan.guest_id` name the intentional WAN listener.
+- `update_script` is the absolute path of the Sunday script, used for a dry run.
+- `scan_coverage` is a list of sentences shown beside a scan result.
+- `single_copy` is a list of `{id, note}` for data that has no second copy.
+- `state_dir` stores the last package check and the operator log. A relative path is next to the config file.
 
 ## Event lines
 
@@ -63,7 +91,7 @@ printf '%s\n' vX.Y.Z > /var/lib/homelab-panel/installed-version
 ln -sfn /opt/homelab-panel/X.Y.Z /opt/homelab-panel/current
 ```
 
-After that copy is running, a newer release installs from the Panel page or with one command. Both use the same installer. It checks the sha256, keeps the previous directory, and restarts only the panel service.
+After that copy is running, a newer release installs from System or with one command. Both use the same installer. It checks the sha256, keeps the previous directory, and restarts only the panel service.
 
 ```sh
 python3 /opt/homelab-panel/current/homelab-panel.pyz --update

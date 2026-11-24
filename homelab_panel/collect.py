@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import time
+from pathlib import Path
 
 from homelab_panel.inventory import (
     docker_listed,
@@ -19,6 +20,19 @@ from homelab_panel.inventory import (
     parse_resources,
     wanted_ids,
 )
+from homelab_panel.observe import (
+    read_das,
+    read_kuma,
+    read_multicast,
+    read_plex,
+    read_render,
+    read_signature_mtime,
+    read_tasks,
+    read_tunnel,
+    read_uptime,
+    read_wan,
+)
+from homelab_panel.signals import parse_guest_conf
 
 _SERVICE_CACHE = {}
 _SERVICE_CACHE_SECONDS = 60
@@ -53,7 +67,7 @@ def collect_snapshot(config, runner=run, reader=read_text, note=None):
     scan_active, scan_since, scan_started = _service(runner, scan_service)
     update_active, update_since, update_started = _service(runner, update_service)
     logs = config.get("logs") or {}
-    return {
+    snapshot = {
         "timers": timers,
         "scan_active": scan_active,
         "scan_since": scan_since,
@@ -69,7 +83,20 @@ def collect_snapshot(config, runner=run, reader=read_text, note=None):
         "guests": read_guests(config, runner, reader),
         "mounts": read_mounts(reader),
         "storages": parse_pvesm(*_storage_reading(runner, note)),
+        "vzdump_text": reader(config.get("vzdump_cron") or "/etc/pve/vzdump.cron"),
+        "uptime_seconds": read_uptime(reader),
+        "multicast_snooping": read_multicast(reader),
+        "kuma": read_kuma(config, runner),
+        "das": read_das(config, runner, reader),
+        "tasks": read_tasks(runner),
+        "plex_xml": read_plex(config),
+        "signature_mtime": read_signature_mtime(lambda path: Path(path).stat()),
+        "render": "unknown",
+        "tunnel": read_tunnel(config, runner),
+        "wan_listening": read_wan(config, runner),
     }
+    snapshot["render"] = read_render(config, runner, snapshot["guests"])
+    return snapshot
 
 
 def read_guests(config, runner=run, reader=read_text):
@@ -79,9 +106,13 @@ def read_guests(config, runner=run, reader=read_text):
     if not listed:
         listed.update(parse_guest_table(runner(["pct", "list"]), "container"))
         listed.update(parse_guest_table(runner(["qm", "list"]), "vm"))
+    if listed:
+        guest_ids = sorted(listed, key=lambda value: int(value) if str(value).isdigit() else 0)
+    else:
+        guest_ids = wanted_ids(config)
     rows = []
     vm = config.get("vm") or {}
-    for guest_id in wanted_ids(config):
+    for guest_id in guest_ids:
         info = listed.get(guest_id, {})
         conf = reader(f"/etc/pve/lxc/{guest_id}.conf") or reader(f"/etc/pve/qemu-server/{guest_id}.conf")
         name = info.get("name") or ""
@@ -90,6 +121,7 @@ def read_guests(config, runner=run, reader=read_text):
         kind = info.get("kind") or ("vm" if guest_id == str(vm.get("id") or "") else "container")
         status = info.get("status") or ""
         services = _guest_services(guest_id, runner) if status == "running" and kind == "container" else []
+        boot = parse_guest_conf(conf)
         row = {
             "id": guest_id,
             "name": name or f"Guest {guest_id}",
@@ -97,6 +129,11 @@ def read_guests(config, runner=run, reader=read_text):
             "kind": kind,
             "address": parse_address(conf),
             "services": services,
+            "onboot": boot["onboot"],
+            "order": boot["order"],
+            "up": boot["up"],
+            "nameservers": boot["nameservers"],
+            "mounts": boot["mounts"],
         }
         for key in ("cpu", "mem", "maxmem", "disk", "maxdisk"):
             if key in info and info[key] is not None:

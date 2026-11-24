@@ -56,5 +56,44 @@
     "201": ":32400/web",
     "208": ":8080/",
     "216": ":8123/"
-  }
+  },
+  "roles": {
+    "201": "media",
+    "216": "house"
+  },
+  "paths": [
+    {
+      "name": "Media",
+      "guest": "201",
+      "lan": "media.example",
+      "public": "media.example.com"
+    }
+  ],
+  "kuma": {
+    "guest_id": ""
+  },
+  "das": {
+    "uuid": "",
+    "mount": "/mnt/storage",
+    "monitor": ""
+  },
+  "disk_unit": "",
+  "tunnel": {
+    "guest_id": ""
+  },
+  "wan": {
+    "port": "",
+    "guest_id": ""
+  },
+  "update_script": "",
+  "scan_coverage": [
+    "The example scan skips the media library and photo originals."
+  ],
+  "single_copy": [
+    {
+      "id": "201",
+      "note": "The example media database has one copy."
+    }
+  ],
+  "state_dir": ".panel-state"
 }

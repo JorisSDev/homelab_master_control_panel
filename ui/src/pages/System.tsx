@@ -1,0 +1,79 @@
+import { useState } from "react";
+import { Empty, Page } from "../components/Chrome";
+import { postJson } from "../lib";
+import type { ViewState } from "../types";
+
+export function Recovery({ state }: { state: ViewState }) {
+  const items = state.recovery || [];
+  return (
+    <Page title="Recovery" context="The first things to check after the host comes back.">
+      {items.length === 0 ? <Empty>The recovery checklist has not been read.</Empty> : null}
+      <ol className="sequence">
+        {items.map((item) => (
+          <li key={item.id}>
+            <span className={item.ok === false ? "bad" : item.ok ? "ok" : ""}>{item.ok === false ? "down" : item.ok ? "up" : "unknown"}</span>
+            <span>
+              {item.label}
+              {item.detail ? <span className="note">{item.detail}</span> : null}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </Page>
+  );
+}
+
+export function SystemPage({ state }: { state: ViewState }) {
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function install() {
+    setBusy(true);
+    setMessage("");
+    const result = await postJson("/api/panel/update");
+    setBusy(false);
+    setMessage(result.ok ? "Installing the panel." : String(result.data.error || "The panel did not update."));
+  }
+
+  async function signOut() {
+    await postJson("/api/logout");
+    window.location.reload();
+  }
+
+  return (
+    <Page
+      title="System"
+      context={state.panel.version ? `Version ${state.panel.version}` : "Panel"}
+      action={
+        <button type="button" className="quiet-button" onClick={() => void signOut()}>
+          Sign out
+        </button>
+      }
+    >
+      <p>
+        {state.panel.update_available
+          ? `Version ${state.panel.latest} is published.`
+          : state.panel.latest
+            ? "This is the published version."
+            : "Release lookup has no result."}
+      </p>
+      {state.panel.error ? <p className="quiet">{state.panel.error}</p> : null}
+      {message ? <p className={message.startsWith("Installing") ? "ok" : "bad"}>{message}</p> : null}
+      {state.panel.update_available ? (
+        <button type="button" disabled={busy} onClick={() => void install()}>
+          Install this version
+        </button>
+      ) : null}
+      <h2>Operator log</h2>
+      {(state.operator || []).length === 0 ? <Empty>No panel actions have been recorded.</Empty> : null}
+      <ul>
+        {(state.operator || []).map((item) => (
+          <li key={item.text}>{item.text}</li>
+        ))}
+      </ul>
+      <p>
+        <a href="/api/report">Download a redacted report</a>
+      </p>
+    </Page>
+  );
+}

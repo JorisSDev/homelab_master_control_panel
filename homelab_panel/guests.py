@@ -132,6 +132,15 @@ def has_floating_tag(services):
     return False
 
 
+def reboot_required(guest_id, runner):
+    found = _invoke(
+        runner,
+        ["pct", "exec", str(guest_id), "--", "stat", "/var/run/reboot-required"],
+        CHECK_TIMEOUT,
+    )
+    return bool(found)
+
+
 def _check_one(guest_id, services, runner):
     apt = _invoke(runner, _apt_simulation(guest_id), CHECK_TIMEOUT)
     found = _invoke(runner, _find_command(guest_id), CHECK_TIMEOUT)
@@ -153,6 +162,7 @@ def _check_one(guest_id, services, runner):
         "security": security,
         "compose": compose,
         "floating": has_floating_tag(services),
+        "reboot": reboot_required(guest_id, runner),
         "error": error,
     }
 

@@ -54,6 +54,14 @@ export type ServiceRow = {
   cpu: string;
   memory: string;
   disk: string;
+  address?: string;
+  order?: number | null;
+  onboot?: boolean;
+  up?: number | null;
+  role?: string;
+  mounts?: string[];
+  nameservers?: string[];
+  blast?: string[];
 };
 
 export type StorageRow = {
@@ -99,6 +107,7 @@ export type GuestUpdateRow = {
   compose: string[];
   floating: boolean;
   error: string;
+  reboot?: boolean;
 };
 
 export type GuestUpdates = {
@@ -151,4 +160,100 @@ export type ViewState = {
     update_available: boolean;
     error: string;
   };
+  attention?: AttentionItem[];
+  figures?: Figures;
+  week?: WeekItem[];
+  upcoming?: WeekItem[];
+  reach?: ReachState;
+  das?: DasState;
+  protection?: ProtectionState;
+  scan_meaning?: ScanMeaning;
+  plex?: PlexState;
+  chronology?: ChronologyItem[];
+  recovery?: RecoveryItem[];
+  operator?: { text: string }[];
+  uptime_seconds?: number | null;
+};
+
+export type AttentionItem = { severity: string; text: string; href: string };
+
+export type Figures = {
+  load: string;
+  memory_used: string;
+  memory_total: string;
+  memory_assigned: string;
+  root_free: string;
+  root_total: string;
+  das_free: string;
+  das_total: string;
+  das_label: string;
+};
+
+export type WeekItem = { unit: string; label: string; next: string; soon: boolean };
+
+export type ReachPath = {
+  name: string;
+  guest: string;
+  lan: string;
+  public: string;
+  lan_ok: boolean | null;
+  public_ok: boolean | null;
+  kuma: string;
+};
+
+export type MonitorRow = { name: string; type: string; status: string; at: string };
+
+export type ReachState = {
+  paths: ReachPath[];
+  monitors: { ok: boolean; error: string; summary: string; rows: MonitorRow[] };
+  pins: { checked: boolean; summary: string; rows: { id: string; name: string; ok: boolean }[] };
+  multicast_snooping: boolean | null;
+  tunnel: { guest: string; connections: number | null; detail: string };
+  wan: { port: string | number; guest: string; listening: boolean | null };
+};
+
+export type DasState = {
+  expected_uuid: string;
+  mounted_uuid: string;
+  speeds: string[];
+  faults: number;
+  recent: string[];
+  smart: string;
+  fstab_waits: boolean | null;
+  summary: string;
+  match: string;
+};
+
+export type ProtectionState = {
+  has_job: boolean;
+  rows: { name: string; id: string; backup: string; snapshot: string; copy: string }[];
+};
+
+export type ScanMeaning = {
+  coverage: string[];
+  signature: string;
+  signature_days: number | null;
+  streaks: { text: string; count: number }[];
+};
+
+export type PlexState = {
+  id: string;
+  version: string;
+  claimed: string;
+  minimum: string;
+  ok: boolean;
+  render: string;
+};
+
+export type ChronologyItem = { text: string; href: string };
+
+export type RecoveryItem = { id: string; label: string; ok: boolean | null; detail: string };
+
+export type Digest = {
+  scan: string;
+  update: string;
+  guests: string;
+  monitors: string;
+  disk: string;
+  event: string;
 };

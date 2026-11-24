@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
+import { awayLines } from "./lib";
 import type { JobView, ViewState } from "./types";
 
 const job = (over: Partial<JobView> = {}): JobView => ({
@@ -127,50 +128,37 @@ const fixture: ViewState = {
   guest_updates: { checked: false, error: "", rows: [], active: "" },
 };
 
-describe("maintenance page", () => {
-  it("opens on home from the logo and keeps findings off the sidebar", () => {
-    const html = renderToStaticMarkup(<App initial={fixture} live={false} />);
-    const brand = html.slice(html.indexOf("<button"), html.indexOf("</button>"));
-    expect(brand).toContain('aria-label="Home"');
-    expect(brand).toContain('class="logo"');
-    expect(brand).toContain("Master control panel");
-    expect(html).not.toContain(">Home<");
-    expect(html).not.toContain(">Findings<");
-    expect(html).not.toContain(">Home</h2>");
+function page(path: string, state: ViewState = fixture) {
+  return renderToStaticMarkup(<App initial={state} live={false} initialPath={path} />);
+}
+
+describe("master panel", () => {
+  it("opens on an overview that only rolls up the other pages", () => {
+    const html = page("/");
     const nav = html.slice(html.indexOf("<nav>"), html.indexOf("</nav>"));
-    for (const label of ["Containers", "Storage", "Update", "Scan", "Panel"]) {
+    for (const label of ["Overview", "Guests", "Reach", "Storage", "Jobs"]) {
       expect(nav).toContain(`>${label}<`);
     }
     expect(nav).not.toContain(">Home<");
     expect(nav).not.toContain(">Findings<");
-    expect(html).toContain("CT 201");
-    expect(html).toContain("media");
-    expect(html).toContain('href="http://10.0.0.30:32400/web"');
-    expect(html).toContain("nginx");
-    expect(html).toContain("1 stopped");
-    expect(html).not.toContain("VM 216");
+    expect(nav).not.toContain(">Recovery<");
+    expect(html).toContain('aria-label="Home"');
+    expect(html).toContain("Master control panel");
     expect(html).toContain("host example finding");
-    expect(html).toContain("On the host");
-    expect(html).toContain("Scan Tue 02 Jan 04:00");
-    expect(html).toContain("Update Sun 04 Jan 06:00");
-    expect(html).toContain("Storage 20.0 GB free on /");
-    expect(html).toContain("Panel dev");
-    expect(html).not.toContain(">Open<");
-    expect(html).not.toContain("What the host is doing");
-    expect(html).not.toContain("Unfinished");
+    expect(html).toContain("Next scan Tue 02 Jan 04:00");
+    expect(html).toContain("Next Sunday update Sun 04 Jan 06:00");
+    expect(html).toContain("20.0 GB free");
+    expect(html).toContain(">dev<");
+    expect(html).not.toContain("VM 216");
+    expect(html).not.toContain("nextcloud:apache");
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
-    expect(html).not.toContain(">Health<");
-    expect(html).not.toContain("Run the scan");
-    expect(html).not.toContain("restart playback");
     expect(html).not.toContain("apt-get install");
-    const clear = renderToStaticMarkup(
-      <App
-        initial={{ ...fixture, findings: { ...fixture.findings, count: 0, items: [] } }}
-        live={false}
-      />,
-    );
-    expect(clear).toContain("Nothing needs attention.");
+    const clear = page("/", {
+      ...fixture,
+      findings: { ...fixture.findings, count: 0, items: [] },
+    });
+    expect(clear).toContain("The house is clear.");
   });
 
   it("shows the running scan in plain language and hides the start button", () => {
@@ -191,7 +179,7 @@ describe("maintenance page", () => {
         ],
       }),
     };
-    const html = renderToStaticMarkup(<App initial={running} live={false} initialSection="scan" />);
+    const html = page("/jobs/scan", running);
     expect(html).toContain("Scan running");
     expect(html).toContain("Malware scan on guest 201");
     expect(html).toContain("5 min");
@@ -202,65 +190,70 @@ describe("maintenance page", () => {
     expect(html).not.toContain("machineIdentifier");
   });
 
-  it("keeps the update confirmation behind a second button", () => {
-    const html = renderToStaticMarkup(<App initial={fixture} live={false} initialSection="update" />);
+  it("keeps the Sunday confirmation behind a second button", () => {
+    const html = page("/jobs/update");
     expect(html.indexOf("Check for updates")).toBeLessThan(html.indexOf("Update all"));
     expect(html).toContain("Update all");
     expect(html).toContain("Check for updates");
+    expect(html).toContain("Dry run");
     expect(html).toContain("Not checked.");
     expect(html).toContain("Next run");
+    expect(html).toContain("Host packages");
+    expect(html).toContain("Guest 201 · Packages");
     expect(html).not.toContain("Start the update");
+    expect(html).not.toContain("Start the dry run");
     expect(html).not.toContain("restarts playback");
     expect(html).not.toContain("The last report was a dry run");
     expect(html).not.toContain("Asks what apt would upgrade");
     expect(html).not.toContain("Transcript");
-    expect(html).toContain("Guest 201 · Packages");
-    expect(html).toContain("=== homelab-update start ===");
-    expect(html).toContain("Host packages");
-    expect(html).toContain("Not checked");
-    const guest = html.slice(html.indexOf("CT 201"), html.indexOf("VM 216"));
-    const vm = html.slice(html.indexOf("VM 216"), html.indexOf("Host packages"));
-    expect(guest).toContain(">Update<");
-    expect(guest).toContain("media");
-    expect(vm).not.toContain(">Update<");
-    expect(vm).toContain("house");
+    expect(html).not.toContain("=== homelab-update start ===");
     expect(html).not.toContain("apt-get install");
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
-    const updating = renderToStaticMarkup(
-      <App
-        initial={{ ...fixture, guest_updates: { ...fixture.guest_updates, active: "201" } }}
-        live={false}
-        initialSection="update"
-      />,
-    );
+    const updating = page("/jobs/update", {
+      ...fixture,
+      guest_updates: { ...fixture.guest_updates, active: "201" },
+    });
     expect(updating).toContain("media is updating");
     expect(updating).not.toContain("Start the update");
   });
 
-  it("names containers without an Open button", () => {
-    const html = renderToStaticMarkup(<App initial={fixture} live={false} initialSection="services" />);
-    expect(html).toContain(">Containers<");
-    expect(html).not.toContain(">Health<");
+  it("lists every guest and keeps a virtual machine free of an update button", () => {
+    const html = page("/guests");
     expect(html).toContain("CT 201");
     expect(html).toContain("VM 216");
+    expect(html).toContain("media");
+    expect(html).toContain("house");
     expect(html).toContain('href="http://10.0.0.30:32400/web"');
     expect(html).toContain('target="_blank"');
     expect(html).toContain('rel="noopener noreferrer"');
     expect(html).toContain("nextcloud:apache");
     expect(html).toContain("—");
     expect(html).not.toContain(">Open<");
-    expect(html).not.toContain('class="open"');
     expect(html).toContain('aria-label="Filter"');
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
     expect(html).not.toContain("apt-get install");
+    const media = page("/guests/201");
+    const house = page("/guests/216");
+    expect(media).toContain("Update this guest");
+    expect(media).toContain("Blast radius");
+    expect(media).not.toContain("Start the guest update");
+    expect(house).not.toContain("Update this guest");
+    const unsafe = page("/guests", {
+      ...fixture,
+      services: {
+        ...fixture.services,
+        rows: [{ ...fixture.services.rows[0], url: "javascript:alert(1)" }, fixture.services.rows[1]],
+      },
+    });
+    expect(unsafe).not.toContain("javascript:");
     const mixed: ViewState = {
       ...fixture,
       services: {
         ...fixture.services,
         rows: [
-          fixture.services.rows[1],
+          { ...fixture.services.rows[1], order: 2 },
           {
             id: "330",
             name: "spare",
@@ -271,17 +264,18 @@ describe("maintenance page", () => {
             cpu: "",
             memory: "",
             disk: "",
+            order: 3,
           },
-          fixture.services.rows[0],
+          { ...fixture.services.rows[0], order: 1 },
         ],
       },
     };
-    const ordered = renderToStaticMarkup(<App initial={mixed} live={false} initialSection="services" />);
+    const ordered = page("/guests", mixed);
     expect(ordered.indexOf("CT 201")).toBeLessThan(ordered.indexOf("VM 216"));
     expect(ordered.indexOf("VM 216")).toBeLessThan(ordered.indexOf("CT 330"));
   });
 
-  it("shows package versions after a check", () => {
+  it("shows package versions after a check and an empty result plainly", () => {
     const checked: ViewState = {
       ...fixture,
       packages: {
@@ -297,7 +291,7 @@ describe("maintenance page", () => {
         ],
       },
     };
-    const html = renderToStaticMarkup(<App initial={checked} live={false} initialSection="update" />);
+    const html = page("/jobs/update", checked);
     expect(html).toContain("openssl");
     expect(html).toContain("1.0");
     expect(html).toContain("1.1");
@@ -311,21 +305,54 @@ describe("maintenance page", () => {
       ...fixture,
       packages: { ...fixture.packages, checked: true, total: 0, security: 0, pending: 0 },
     };
-    const empty = renderToStaticMarkup(<App initial={waiting} live={false} initialSection="update" />);
-    expect(empty).toContain("Nothing is waiting.");
+    expect(page("/jobs/update", waiting)).toContain("Nothing is waiting.");
   });
 
-  it("offers install only when a newer release exists", () => {
-    const html = renderToStaticMarkup(<App initial={fixture} live={false} initialSection="panel" />);
-    expect(html).toContain("Install");
-    expect(html).toContain("Sign out");
-    expect(html).toContain("v0.4.0");
-    const current = {
+  it("puts monitors on Reach, meters on Storage, and install behind a published release", () => {
+    const rich: ViewState = {
       ...fixture,
-      panel: { ...fixture.panel, update_available: false },
+      reach: {
+        paths: [{ name: "Media", guest: "201", lan: "media.example", public: "media.example.com", lan_ok: true, public_ok: null, kuma: "up" }],
+        monitors: { ok: true, error: "", summary: "1 up", rows: [{ name: "Media", type: "http", status: "up", at: "" }] },
+        pins: { checked: true, summary: "1 pins match", rows: [{ id: "201", name: "media", ok: true }] },
+        multicast_snooping: false,
+        tunnel: { guest: "114", connections: 4, detail: "" },
+        wan: { port: 32400, guest: "201", listening: true },
+      },
+      uptime_seconds: 120,
     };
-    const same = renderToStaticMarkup(<App initial={current} live={false} initialSection="panel" />);
-    expect(same).not.toContain(">Install<");
-    expect(same).toContain("Sign out");
+    const reach = page("/reach", rich);
+    expect(reach).toContain("Media");
+    expect(reach).toContain("media.example");
+    expect(reach).toContain("1 pins match");
+    expect(reach).toContain("Multicast snooping");
+    expect(reach).toContain("is off");
+    expect(reach).not.toContain("api/push");
+    const storage = page("/storage");
+    expect(storage).toContain("Run disk check");
+    expect(storage).toContain("There is no backup job.");
+    expect(storage).toContain("20.0 GB free of 32.0 GB");
+    const system = page("/system");
+    expect(system).toContain("Install this version");
+    expect(system).toContain("Sign out");
+    expect(system).toContain("v0.4.0");
+    const current = page("/system", { ...fixture, panel: { ...fixture.panel, update_available: false } });
+    expect(current).not.toContain("Install this version");
+    expect(current).toContain("Sign out");
+    expect(page("/", rich)).toContain("Open the recovery checklist");
+  });
+
+  it("describes what changed since the last visit", () => {
+    const before = {
+      scan: "clean",
+      update: "idle",
+      guests: "201:Running",
+      monitors: "Media:up",
+      disk: "20 GB",
+      event: "",
+    };
+    const after = { ...before, scan: "finding", monitors: "Media:down", event: "Scan finished" };
+    expect(awayLines(before, after)).toEqual(["Scan is now finding", "A monitor changed.", "Scan finished"]);
+    expect(awayLines(before, before)).toEqual([]);
   });
 });

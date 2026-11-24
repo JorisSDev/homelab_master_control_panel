@@ -13,6 +13,8 @@ import argparse
 import json
 import mimetypes
 import re
+import socket
+import subprocess
 import threading
 import time
 import zipfile
@@ -23,10 +25,12 @@ from homelab_panel.actions import start_action, start_unit
 from homelab_panel.auth import clear_cookie, new_session, session_token, set_cookie, verify_password
 from homelab_panel.collect import collect_snapshot
 from homelab_panel.config import ConfigError, load_config
-from homelab_panel.guests import check_guests, run_guest, running_container, update_guest
+from homelab_panel.guests import check_guests, reboot_required, run_guest, running_container, update_guest
 from homelab_panel.inventory import GUEST_ID, check_packages, wanted_ids
 from homelab_panel.self_update import UpdateError, describe, install_release
+from homelab_panel.signals import parse_resolv, pins_match, report_text
 from homelab_panel.state import build_state
+from homelab_panel.store import append_operator, load_checks, read_operator, save_checks
 
 CACHE_SECONDS = 5
 ACTIVE_CACHE_SECONDS = 1
@@ -54,6 +58,14 @@ class Panel:
         self._sessions = {}
         self._failures = 0
         self._locked_until = 0.0
+        self._pins = {"checked": False, "rows": []}
+        self._probes = {}
+        stored = load_checks(config)
+        if stored:
+            if isinstance(stored.get("packages"), dict):
+                self._packages = stored["packages"]
+            if isinstance(stored.get("guest_updates"), dict):
+                self._guest_updates = stored["guest_updates"]
 
     def _ttl(self):
         if self._guest_active:
@@ -67,7 +79,12 @@ class Panel:
         info = self._release_info(now)
         with self._lock:
             if self._state is None or now - self._at > self._ttl():
-                built = build_state(self.config, self.provider())
+                raw = self.provider() or {}
+                snapshot = dict(raw)
+                snapshot["pins"] = self._pins
+                snapshot["probes"] = self._probes
+                snapshot["operator"] = [{"text": line, "href": "/system"} for line in read_operator(self.config)]
+                built = build_state(self.config, snapshot)
                 self._apply_release(built, info)
                 self._apply_packages(built)
                 self._apply_guest_updates(built)
@@ -122,8 +139,14 @@ class Panel:
         if clean.startswith("/api/"):
             if not self._authorized(headers):
                 return self._json(401, {"error": "Sign in is required."})
-            if method == "POST" and clean in ("/api/actions/scan", "/api/actions/update"):
+            if method == "POST" and clean in ("/api/actions/scan", "/api/actions/update", "/api/actions/disk"):
                 return self._action(clean, body)
+            if method == "POST" and clean == "/api/reach/pins":
+                return self._check_pins()
+            if method == "POST" and clean == "/api/reach/paths":
+                return self._check_paths()
+            if method == "GET" and clean == "/api/report":
+                return self._report()
             if method == "POST" and clean == "/api/panel/update":
                 return self._panel_update()
             if method == "POST" and clean == "/api/packages/check":
@@ -154,7 +177,13 @@ class Panel:
         payload = _payload(body)
         if payload is None:
             return self._json(400, {"error": "The request could not be read."})
-        kind = "scan" if path.endswith("/scan") else "update"
+        kind = "scan" if path.endswith("/scan") else "disk" if path.endswith("/disk") else "update"
+        if kind == "update":
+            payload = _payload(body)
+            if payload is None:
+                return self._json(400, {"error": "The request could not be read."})
+            if payload.get("dry") is True:
+                return self._dry_run(payload.get("confirm") is True)
         status, result, started = start_action(
             self.config,
             kind,
@@ -166,7 +195,35 @@ class Panel:
             with self._lock:
                 self._state = None
                 self._at = 0.0
+            self._log({"scan": "Ran the scan", "update": "Started the Sunday update", "disk": "Ran the disk check"}.get(kind, "Started a job"))
         return self._json(status, result)
+
+    def _dry_run(self, confirmed):
+        if not confirmed:
+            return self._json(400, {"error": "The update was not confirmed."})
+        script = str(self.config.get("update_script") or "")
+        if not script.startswith("/") or any(char in script for char in "\n;&|$`<>"):
+            return self._json(400, {"error": "The dry run is not configured."})
+        if not Path(script).is_file():
+            return self._json(400, {"error": "The dry run is not configured."})
+        threading.Thread(target=self._run_dry, args=(script,), daemon=True).start()
+        self._log("Started a dry run")
+        with self._lock:
+            self._state = None
+            self._at = 0.0
+        return self._json(202, {"started": "dry-run"})
+
+    def _run_dry(self, script):
+        try:
+            subprocess.run([script, "--dry-run"], timeout=900, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return
+
+    def _log(self, action):
+        append_operator(self.config, action)
+
+    def _remember(self):
+        save_checks(self.config, self._packages, self._guest_updates)
 
     def _panel_update(self):
         if self.installer is None:
@@ -176,6 +233,8 @@ class Panel:
         except UpdateError as exc:
             return self._json(400, {"error": str(exc)})
         status = 200 if result.get("status") == "current" else 202
+        if status == 202:
+            self._log("Installed a panel release")
         return self._json(status, result)
 
     def _check_packages(self):
@@ -186,6 +245,8 @@ class Panel:
             self._packages = result
             self._state = None
             self._at = 0.0
+        self._remember()
+        self._log("Checked host packages")
         return self._json(200, result)
 
     def _check_guests(self):
@@ -201,6 +262,8 @@ class Panel:
             }
             self._state = None
             self._at = 0.0
+        self._remember()
+        self._log("Checked guest packages")
         return self._json(200, result)
 
     def _update_guest(self, guest_id, body):
@@ -240,17 +303,21 @@ class Panel:
 
     def _run_guest_update(self, guest_id, directories):
         error = "The update did not finish."
+        reboot = False
         try:
             error = update_guest(guest_id, directories, self.guest_runner) or ""
+            reboot = reboot_required(guest_id, self.guest_runner)
         except Exception:
             error = "The update did not finish."
         with self._lock:
-            self._mark_guest(guest_id, error)
+            self._mark_guest(guest_id, error, reboot)
             self._guest_active = ""
             self._state = None
             self._at = 0.0
+        self._remember()
+        self._log(f"Updated guest {guest_id}")
 
-    def _mark_guest(self, guest_id, error):
+    def _mark_guest(self, guest_id, error, reboot=False):
         stored = self._guest_updates or {"checked": False, "error": "", "rows": []}
         rows = []
         found = False
@@ -258,6 +325,7 @@ class Panel:
             copied = dict(row)
             if str(copied.get("id") or "") == guest_id:
                 copied["error"] = error
+                copied["reboot"] = bool(reboot)
                 found = True
             rows.append(copied)
         if not found:
@@ -268,6 +336,7 @@ class Panel:
                     "security": 0,
                     "compose": [],
                     "floating": False,
+                    "reboot": bool(reboot),
                     "error": error,
                 }
             )
@@ -276,6 +345,54 @@ class Panel:
             "error": stored.get("error") or "",
             "rows": rows,
         }
+
+    def _check_pins(self):
+        if self.guest_runner is None:
+            return self._json(400, {"error": "This copy cannot check pins."})
+        snapshot = self.provider() or {}
+        rows = []
+        for guest in snapshot.get("guests") or []:
+            expected = [str(item) for item in guest.get("nameservers") or [] if item]
+            guest_id = str(guest.get("id") or "")
+            if not expected or guest.get("kind") == "vm" or not GUEST_ID.fullmatch(guest_id):
+                continue
+            try:
+                text = self.guest_runner(["pct", "exec", guest_id, "--", "cat", "/etc/resolv.conf"], 8)
+            except TypeError:
+                text = self.guest_runner(["pct", "exec", guest_id, "--", "cat", "/etc/resolv.conf"])
+            live = parse_resolv(text or "")
+            rows.append(
+                {
+                    "id": guest_id,
+                    "name": guest.get("name") or guest_id,
+                    "ok": pins_match(expected, live),
+                }
+            )
+        result = {"checked": True, "rows": rows}
+        with self._lock:
+            self._pins = result
+            self._state = None
+            self._at = 0.0
+        self._log("Checked DNS pins")
+        return self._json(200, result)
+
+    def _check_paths(self):
+        probes = {}
+        for item in self.config.get("paths") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "")
+            probes[name] = {"lan": _answers(item.get("lan")), "public": _answers(item.get("public"))}
+        with self._lock:
+            self._probes = probes
+            self._state = None
+            self._at = 0.0
+        self._log("Checked service paths")
+        return self._json(200, {"paths": probes})
+
+    def _report(self):
+        body = report_text(self.state()).encode()
+        return 200, {"Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store"}, body
 
     def _json(self, status, payload, extra=None):
         body = json.dumps(payload).encode()
@@ -437,6 +554,17 @@ def _payload(body):
     if not isinstance(value, dict):
         return None
     return value
+
+
+def _answers(name):
+    host = str(name or "").strip()
+    if not host:
+        return None
+    try:
+        socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    return True
 
 
 def serve(config, provider=None, assets=None):

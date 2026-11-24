@@ -1,165 +1,162 @@
 import { useEffect, useState } from "react";
-import { Login } from "./components/Login";
 import { Logo } from "./components/Logo";
-import { Containers, Home, PanelPage, ScanJob, Storage, UpdateJob } from "./components/Sections";
-import type { Section, ViewState } from "./types";
+import { Login } from "./components/Login";
+import { Guests } from "./pages/Guests";
+import { Jobs } from "./pages/Jobs";
+import { Overview } from "./pages/Overview";
+import { Reach } from "./pages/Reach";
+import { Storage } from "./pages/Storage";
+import { Recovery, SystemPage } from "./pages/System";
+import { postJson } from "./lib";
+import type { ViewState } from "./types";
 
 type Props = {
   initial?: ViewState | null;
   live?: boolean;
-  initialSection?: Section;
+  initialPath?: string;
 };
 
-const SECTIONS: { id: Section; label: string }[] = [
-  { id: "services", label: "Containers" },
-  { id: "storage", label: "Storage" },
-  { id: "update", label: "Update" },
-  { id: "scan", label: "Scan" },
-  { id: "panel", label: "Panel" },
-];
+const NAV = [
+  ["/", "Overview"],
+  ["/guests", "Guests"],
+  ["/reach", "Reach"],
+  ["/storage", "Storage"],
+  ["/jobs", "Jobs"],
+] as const;
 
-export function App({ initial = null, live = true, initialSection = "home" }: Props) {
+export function App({ initial = null, live = true, initialPath = "/" }: Props) {
   const [state, setState] = useState<ViewState | null>(initial);
-  const [authed, setAuthed] = useState(initial != null);
-  const [error, setError] = useState("");
-  const [loginError, setLoginError] = useState("");
-  const [signingIn, setSigningIn] = useState(false);
-  const [section, setSection] = useState<Section>(initialSection);
+  const [path, setPath] = useState(initialPath);
+  const [ready, setReady] = useState(initial !== null || !live);
 
   useEffect(() => {
     if (!live) {
       return;
     }
     let stop = false;
-    let timer = 0;
-
-    async function tick() {
-      try {
-        const response = await fetch("/api/state", { cache: "no-store" });
-        if (response.status === 401) {
-          if (!stop) {
-            setAuthed(false);
-            setState(null);
-            setError("");
-          }
-          return;
-        }
-        if (!response.ok) {
-          throw new Error(String(response.status));
-        }
-        const next = (await response.json()) as ViewState;
-        if (!stop) {
-          setState(next);
-          setAuthed(true);
-          setError("");
-          const busy = !next.scan.idle || !next.update.idle || Boolean(next.guest_updates?.active);
-          const seconds = busy ? 2 : Math.max(1, next.refresh_seconds || 10);
-          timer = window.setTimeout(tick, seconds * 1000);
-        }
-      } catch {
-        if (!stop) {
-          setError("The page could not be read. It will try again.");
-          timer = window.setTimeout(tick, 10000);
-        }
-      }
-    }
-
-    void tick();
-    return () => {
-      stop = true;
-      window.clearTimeout(timer);
-    };
-  }, [live, authed]);
-
-  async function signIn(password: string) {
-    setSigningIn(true);
-    setLoginError("");
-    try {
-      const response = await fetch("/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
-      });
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as { error?: string };
-        setLoginError(payload.error || "Sign in failed.");
+    const pull = async () => {
+      const response = await fetch("/api/state", { cache: "no-store" });
+      if (stop) {
         return;
       }
-      setAuthed(true);
-    } catch {
-      setLoginError("The page could not be reached.");
-    } finally {
-      setSigningIn(false);
+      if (response.status === 401) {
+        setState(null);
+        setReady(true);
+        return;
+      }
+      if (response.ok) {
+        setState((await response.json()) as ViewState);
+        setReady(true);
+      }
+    };
+    void pull();
+    const timer = window.setInterval(() => void pull(), 10000);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, [live]);
+
+  useEffect(() => {
+    if (!live) {
+      return;
     }
+    const onPop = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", onPop);
+    setPath(window.location.pathname);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [live]);
+
+  function go(next: string) {
+    if (live) {
+      window.history.pushState(null, "", next);
+    }
+    setPath(next);
   }
 
-  async function signOut() {
-    await fetch("/api/logout", { method: "POST" });
-    setState(null);
-    setAuthed(false);
+  if (!ready) {
+    return <p className="quiet boot">Reading the host.</p>;
+  }
+  if (!state) {
+    return <Gate />;
   }
 
-  if (!authed) {
-    return <Login error={loginError} busy={signingIn} onSubmit={(password) => void signIn(password)} />;
-  }
-
+  const page = route(path, state, setState, go);
   return (
     <div className="shell">
-      <aside className="side">
-        <button
-          type="button"
-          className="brand"
-          aria-label="Home"
-          aria-current={section === "home" ? "page" : undefined}
-          onClick={() => setSection("home")}
-        >
+      <aside>
+        <button type="button" className="brand" aria-label="Home" onClick={() => go("/")}>
           <Logo />
-          <h1>Master control panel</h1>
+          <span>Master control panel</span>
         </button>
         <nav>
-          {SECTIONS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              aria-current={section === item.id ? "page" : undefined}
-              onClick={() => setSection(item.id)}
+          {NAV.map(([href, label]) => (
+            <a
+              key={href}
+              href={href}
+              aria-current={current(path, href) ? "page" : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                go(href);
+              }}
             >
-              {item.label}
-            </button>
+              {label}
+            </a>
           ))}
         </nav>
+        <button type="button" className="version" onClick={() => go("/system")}>
+          {state.panel.version || "dev"}
+        </button>
       </aside>
-      <main className="main">
-        {error ? <p className="bad">{error}</p> : null}
-        {state ? (
-          <>
-            {section === "home" ? <Home state={state} onOpen={setSection} /> : null}
-            {section === "services" ? <Containers services={state.services} /> : null}
-            {section === "storage" ? <Storage storage={state.storage} /> : null}
-            {section === "update" ? (
-              <UpdateJob
-                job={state.update}
-                packages={state.packages}
-                services={state.services}
-                guestUpdates={state.guest_updates}
-                onPackages={(packages) => setState((current) => (current ? { ...current, packages } : current))}
-                onGuests={(guestUpdates) =>
-                  setState((current) => (current ? { ...current, guest_updates: guestUpdates } : current))
-                }
-                onGuestActive={(id) =>
-                  setState((current) =>
-                    current ? { ...current, guest_updates: { ...current.guest_updates, active: id } } : current,
-                  )
-                }
-              />
-            ) : null}
-            {section === "scan" ? <ScanJob job={state.scan} /> : null}
-            {section === "panel" ? <PanelPage panel={state.panel} onSignOut={() => void signOut()} /> : null}
-          </>
-        ) : (
-          <p className="quiet">Reading the host.</p>
-        )}
-      </main>
+      <main>{page}</main>
     </div>
   );
+}
+
+function Gate() {
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function onSubmit(password: string) {
+    setBusy(true);
+    setError("");
+    const result = await postJson("/api/login", { password });
+    setBusy(false);
+    if (result.ok) {
+      window.location.reload();
+      return;
+    }
+    setError(String(result.data.error || "The password was not accepted."));
+  }
+
+  return <Login error={error} busy={busy} onSubmit={(password) => void onSubmit(password)} />;
+}
+
+function current(path: string, href: string) {
+  if (href === "/") {
+    return path === "/";
+  }
+  return path === href || path.startsWith(`${href}/`);
+}
+
+function route(path: string, state: ViewState, setState: (next: ViewState) => void, go: (next: string) => void) {
+  if (path === "/guests" || path.startsWith("/guests/")) {
+    return <Guests state={state} path={path} go={go} />;
+  }
+  if (path === "/reach") {
+    return <Reach state={state} onState={setState} />;
+  }
+  if (path === "/storage") {
+    return <Storage state={state} />;
+  }
+  if (path === "/jobs" || path.startsWith("/jobs/")) {
+    return <Jobs state={state} path={path} onState={setState} />;
+  }
+  if (path === "/recovery") {
+    return <Recovery state={state} />;
+  }
+  if (path === "/system") {
+    return <SystemPage state={state} />;
+  }
+  return <Overview state={state} go={go} />;
 }

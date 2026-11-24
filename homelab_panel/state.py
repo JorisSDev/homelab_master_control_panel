@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import re
 
+from homelab_panel.assemble import extend_state
 from homelab_panel.parse_events import format_step, parse_events, steps_for_run
 from homelab_panel.parse_logs import duration_between, parse_runs
 from homelab_panel.parse_timers import format_when, parse_timers
@@ -56,7 +57,7 @@ def build_state(config, snapshot, now=None):
         "error": "",
     }
     guest_updates = {"checked": False, "error": "", "rows": [], "active": ""}
-    return {
+    built = {
         "refresh_seconds": int(config.get("refresh_seconds") or 10),
         "update": update,
         "scan": scan,
@@ -68,6 +69,7 @@ def build_state(config, snapshot, now=None):
         "guest_updates": guest_updates,
         "panel": panel,
     }
+    return extend_state(built, config, snapshot, clock)
 
 
 def _apply_event_steps(runs, events):

@@ -1,7 +1,7 @@
 [project]
 name = "homelab-panel"
 version = "0.1.0"
-description = "Read-only maintenance view for a Proxmox host."
+description = "LAN master panel for a Proxmox host."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
