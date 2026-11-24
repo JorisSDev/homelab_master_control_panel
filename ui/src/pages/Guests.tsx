@@ -1,5 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import { Badge, Confirm, Empty, Page } from "../components/Chrome";
+import { Button } from "../components/ui/button";
+import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet";
+import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { machineMark, postJson, reorderIds } from "../lib";
 import type { ServiceRow, ViewState } from "../types";
 
@@ -25,6 +30,7 @@ export function Guests({
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const dragId = useRef("");
+  const narrow = useNarrow();
   if (baseline !== serverKey) {
     setBaseline(serverKey);
     setOrder(serverOrder);
@@ -73,23 +79,28 @@ export function Guests({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <div className="sort" role="group" aria-label="Sort">
-          <span>Sort</span>
-          <button type="button" aria-pressed={mode === "boot"} onClick={() => setMode("boot")}>
-            Boot
-          </button>
-          <button type="button" aria-pressed={mode === "address"} onClick={() => setMode("address")}>
-            Address
-          </button>
-        </div>
-        {mode === "boot" ? (
-          <button type="button" disabled={!dirty || busy} onClick={() => setConfirmSave(true)}>
+        <span className="meta">Sort by</span>
+        <ToggleGroup
+          type="single"
+          value={mode}
+          aria-label="Sort by"
+          onValueChange={(value) => {
+            if (value === "boot" || value === "address") {
+              setMode(value);
+            }
+          }}
+        >
+          <ToggleGroupItem value="boot">Boot</ToggleGroupItem>
+          <ToggleGroupItem value="address">Address</ToggleGroupItem>
+        </ToggleGroup>
+        {mode === "boot" && dirty ? (
+          <Button type="button" disabled={busy} onClick={() => setConfirmSave(true)}>
             Save
-          </button>
+          </Button>
         ) : null}
       </div>
       {message ? <p className={message.startsWith("Saved") ? "ok" : "bad"}>{message}</p> : null}
-      <div className={open ? "split" : ""}>
+      <div className={open && !narrow ? "split" : ""}>
         <ol className="machines">
           {rows.length === 0 ? <Empty>No machines were reported.</Empty> : null}
           {rows.map((row) => {
@@ -134,26 +145,27 @@ export function Guests({
                 <span className="machine-memory num">{row.memory || "—"}</span>
                 {canDrag ? (
                   <span className="machine-move">
-                    <button type="button" className="quiet-button" disabled={index <= 0} onClick={() => shift(row.id, -1)}>
-                      Move up
-                    </button>
-                    <button type="button" className="quiet-button" disabled={index < 0 || index >= order.length - 1} onClick={() => shift(row.id, 1)}>
-                      Move down
-                    </button>
+                    <IconButton label={`Move ${row.name} up`} disabled={index <= 0} onClick={() => shift(row.id, -1)}>
+                      <ChevronUp aria-hidden="true" />
+                    </IconButton>
+                    <IconButton label={`Move ${row.name} down`} disabled={index < 0 || index >= order.length - 1} onClick={() => shift(row.id, 1)}>
+                      <ChevronDown aria-hidden="true" />
+                    </IconButton>
                   </span>
                 ) : null}
-                {safeHref(row.url) ? (
-                  <a className="text-link" href={safeHref(row.url)} target="_blank" rel="noopener noreferrer">
-                    Open
-                  </a>
-                ) : (
-                  <span />
-                )}
               </li>
             );
           })}
         </ol>
-        {open ? <Dossier row={open} state={state} /> : null}
+        {open && !narrow ? <Dossier row={open} state={state} /> : null}
+        {open && narrow ? (
+          <Sheet open onOpenChange={(next) => { if (!next) go("/guests"); }}>
+            <SheetContent aria-describedby={undefined}>
+              <SheetTitle className="sr-only">{open.name}</SheetTitle>
+              <Dossier row={open} state={state} />
+            </SheetContent>
+          </Sheet>
+        ) : null}
       </div>
       {confirmSave ? (
         <Confirm title="Save boot order" confirmLabel="Save" busy={busy} onCancel={() => setConfirmSave(false)} onConfirm={() => void save()}>
@@ -219,10 +231,17 @@ function Dossier({ row, state }: { row: ServiceRow; state: ViewState }) {
         </div>
         <div className="page-action">
           <Badge value={row.status} />
+          {safeHref(row.url) ? (
+            <Button variant="outline" size="icon" asChild>
+              <a href={safeHref(row.url)} target="_blank" rel="noopener noreferrer" aria-label={`Open ${row.name}`}>
+                <ExternalLink aria-hidden="true" />
+              </a>
+            </Button>
+          ) : null}
           {canUpdate ? (
-            <button type="button" onClick={() => setConfirm(true)}>
+            <Button type="button" onClick={() => setConfirm(true)}>
               Update this machine
-            </button>
+            </Button>
           ) : null}
         </div>
       </header>
@@ -230,13 +249,6 @@ function Dossier({ row, state }: { row: ServiceRow; state: ViewState }) {
       <p className="num">
         {row.cpu || "—"} CPU · {row.memory || "—"} memory · {row.disk || "—"} disk
       </p>
-      {safeHref(row.url) ? (
-        <p>
-          <a href={safeHref(row.url)} target="_blank" rel="noopener noreferrer">
-            Open the service
-          </a>
-        </p>
-      ) : null}
       <p className="section-label">Blast radius</p>
       {(row.blast || []).length === 0 ? <Empty>No later guests or shared disks were recorded.</Empty> : null}
       <ul>
@@ -278,6 +290,44 @@ function Dossier({ row, state }: { row: ServiceRow; state: ViewState }) {
       ) : null}
     </article>
   );
+}
+
+function IconButton({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button type="button" variant="outline" size="icon" aria-label={label} disabled={disabled} onClick={onClick}>
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function useNarrow() {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") {
+      return;
+    }
+    const query = window.matchMedia("(max-width: 1100px)");
+    const apply = () => setNarrow(query.matches);
+    apply();
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, []);
+  return narrow;
 }
 
 function safeHref(url: string) {

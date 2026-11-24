@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Logo } from "./components/Logo";
 import { Login } from "./components/Login";
+import { Button } from "./components/ui/button";
+import { TooltipProvider } from "./components/ui/tooltip";
 import { Guests } from "./pages/Guests";
 import { Jobs } from "./pages/Jobs";
 import { Overview } from "./pages/Overview";
@@ -84,12 +86,13 @@ export function App({ initial = null, live = true, initialPath = "/" }: Props) {
 
   const page = route(path, state, setState, go);
   return (
+    <TooltipProvider>
     <div className="shell">
       <aside>
-        <button type="button" className="brand" aria-label="Home" onClick={() => go("/")}>
+        <Button type="button" variant="ghost" className="brand h-auto justify-start px-0" aria-label="Home" onClick={() => go("/")}>
           <Logo />
           <span>Master control panel</span>
-        </button>
+        </Button>
         <nav>
           {NAV.map(([href, label]) => (
             <a
@@ -105,12 +108,13 @@ export function App({ initial = null, live = true, initialPath = "/" }: Props) {
             </a>
           ))}
         </nav>
-        <button type="button" className="version" onClick={() => go("/system")}>
+        <Button type="button" variant="ghost" className="version mt-auto h-auto justify-start px-0 text-[var(--muted)]" onClick={() => go("/system")}>
           {state.panel.version || "dev"}
-        </button>
+        </Button>
       </aside>
       <main>{page}</main>
     </div>
+    </TooltipProvider>
   );
 }
 

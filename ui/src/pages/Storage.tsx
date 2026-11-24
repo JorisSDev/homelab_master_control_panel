@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Meter, Page } from "../components/Chrome";
+import { Button } from "../components/ui/button";
 import { postJson } from "../lib";
 import type { ProtectionState, ViewState } from "../types";
 
@@ -22,9 +23,9 @@ export function Storage({ state }: { state: ViewState }) {
       title="Storage"
       context={state.storage.summary}
       action={
-        <button type="button" disabled={busy} onClick={() => void runDisk()}>
+        <Button type="button" disabled={busy} onClick={() => void runDisk()}>
           Run disk check
-        </button>
+        </Button>
       }
     >
       {message ? <p className={message.startsWith("Starting") ? "ok" : "bad"}>{message}</p> : null}

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Badge, Empty, Page } from "../components/Chrome";
+import { Button } from "../components/ui/button";
 import { postJson } from "../lib";
 import type { ViewState } from "../types";
 
@@ -36,12 +37,12 @@ export function Reach({ state, onState }: { state: ViewState; onState: (next: Vi
       context={headline}
       action={
         <div className="row-actions">
-          <button type="button" className="quiet-button" disabled={busy} onClick={() => void run("/api/reach/paths", "Checked paths")}>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => void run("/api/reach/paths", "Checked paths")}>
             Check paths
-          </button>
-          <button type="button" disabled={busy} onClick={() => void run("/api/reach/pins", "Checked DNS pins")}>
+          </Button>
+          <Button type="button" disabled={busy} onClick={() => void run("/api/reach/pins", "Checked DNS pins")}>
             Check DNS pins
-          </button>
+          </Button>
         </div>
       }
     >

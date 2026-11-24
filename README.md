@@ -23,6 +23,7 @@ Paths are `/`, `/guests`, `/guests/<id>`, `/reach`, `/storage`, `/jobs`, `/jobs/
 - Update one running container after confirmation.
 - Start the Sunday update after a confirmation that names the effect: packages install, Compose apps are recreated, playback restarts when that is what the host job does, and there is no vzdump rollback while no backup job exists.
 - Dry-run the Sunday update when `update_script` is set.
+- Skip the next Sunday update, move its weekly day and time, or schedule one extra run. Each one asks for confirmation. Only `homelab-update` changes. The extra run restarts playback.
 - Run the disk check when `disk_unit` is set.
 - Check DNS pins and service paths.
 - Install a newer panel release.

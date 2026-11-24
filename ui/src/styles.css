@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 :root {
   color-scheme: dark;
   --canvas: #12110f;
@@ -34,7 +36,6 @@ body {
 button,
 input {
   font: inherit;
-  color: inherit;
 }
 
 :focus-visible {
@@ -62,32 +63,13 @@ tbody tr {
   transition: background-color 150ms ease;
 }
 
-button {
-  border: 1px solid var(--ink);
-  background: var(--ink);
-  color: var(--paper);
-  padding: 0.45rem 0.85rem;
-  cursor: pointer;
-}
-
-button:hover:not(:disabled) {
-  background: #e4dfd4;
-}
-
-button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.quiet-button,
-.version,
 .brand {
   background: transparent;
   color: var(--ink);
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
+  cursor: pointer;
 }
 
-.quiet-button:hover:not(:disabled),
 .text-link:hover,
 nav a:hover,
 .machine:hover,
@@ -108,16 +90,26 @@ a {
   text-underline-offset: 0.15em;
 }
 
+a.inline-flex {
+  color: inherit;
+  text-decoration: none;
+}
+
 .shell {
   display: grid;
   grid-template-columns: 16rem minmax(0, 1fr);
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 aside {
+  position: sticky;
+  top: 0;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  height: 100vh;
+  overflow: auto;
   padding: 1.25rem 1rem;
   border-right: 1px solid var(--line);
   background: var(--paper);
@@ -327,7 +319,7 @@ h3 {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  width: 9.5rem;
+  width: auto;
   white-space: nowrap;
 }
 
@@ -473,16 +465,13 @@ h3 {
 
 .machine {
   display: grid;
-  grid-template-columns: 2.5rem minmax(0, 1fr) 9.5rem 7rem minmax(5.5rem, auto);
+  grid-template-columns: 2.5rem minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 0.75rem;
+  min-width: 0;
   min-height: 44px;
   padding: 0.2rem 0;
   border-bottom: 1px solid var(--line);
-}
-
-.machine:has(.machine-move) {
-  grid-template-columns: 2.5rem minmax(0, 1fr) 9.5rem 7rem auto auto;
 }
 
 .machine.selected {
@@ -509,8 +498,17 @@ h3 {
   font-weight: 600;
 }
 
+.machine-id strong,
+.machine-id .meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .machine-memory {
   text-align: right;
+  white-space: nowrap;
 }
 
 .machine-move {
@@ -533,9 +531,19 @@ h3 {
 
 .split {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(16rem, 0.9fr);
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) 22rem;
+  gap: 1.25rem;
   align-items: start;
+}
+
+.split .machines,
+.dossier {
+  min-width: 0;
+}
+
+.dossier {
+  position: sticky;
+  top: 1rem;
 }
 
 table {
@@ -680,6 +688,35 @@ th.num {
   background: var(--accent);
   color: var(--accent-ink);
   padding: 0 0.3rem;
+}
+
+.schedule {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0 1.25rem;
+}
+
+.schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+}
+
+.schedule-row label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: var(--meta);
+}
+
+.schedule-row select,
+.schedule-row input {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: 4px;
+  padding: 0.45rem 0.6rem;
+  color: var(--ink);
 }
 
 .standing {

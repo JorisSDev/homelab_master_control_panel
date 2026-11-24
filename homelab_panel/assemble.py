@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from homelab_panel.identity import parse_identity, version_tuple
 from homelab_panel.parse_logs import parse_runs
+from homelab_panel.schedule import load_schedule, overlay_calendar, public_schedule
 from homelab_panel.signals import blast_lines, house_calendar, signature_age_days, vzdump_has_job
 
 TIMER_LABELS = {
@@ -26,7 +27,9 @@ def extend_state(state, config, snapshot, now):
     state["figures"] = _figures(state, snapshot, config)
     state["week"] = _week(state, snapshot, now)
     state["upcoming"] = [item for item in state["week"] if item["soon"]][:6]
-    state["calendar"] = house_calendar(snapshot.get("calendars") or {}, snapshot.get("timers") or [])
+    stored = load_schedule(config)
+    state["schedule"] = public_schedule(stored)
+    state["calendar"] = overlay_calendar(house_calendar(snapshot.get("calendars") or {}, snapshot.get("timers") or []), stored)
     state["reach"] = _reach(config, snapshot, state)
     state["das"] = _das(config, snapshot, state)
     state["protection"] = _protection(config, snapshot, state)

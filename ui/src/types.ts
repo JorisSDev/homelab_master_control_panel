@@ -165,6 +165,7 @@ export type ViewState = {
   week?: WeekItem[];
   upcoming?: WeekItem[];
   calendar?: CalendarState;
+  schedule?: ScheduleState;
   reach?: ReachState;
   das?: DasState;
   protection?: ProtectionState;
@@ -195,6 +196,13 @@ export type WeekItem = { unit: string; label: string; next: string; soon: boolea
 export type CalendarRule = { label: string; time: string; weekdays: number[] | null; until?: string };
 
 export type CalendarState = { rules: CalendarRule[]; standing: string[] };
+
+export type ScheduleState = {
+  skip: string;
+  once: string;
+  once_time: string;
+  weekly: { weekday: number; time: string } | null;
+};
 
 export type ReachPath = {
   name: string;

@@ -183,11 +183,11 @@ describe("master panel", () => {
     expect(html).toContain("Sun 04 Jan 06:00");
     expect(html).toContain("Proxmox package refresh");
     expect(html).toContain("Last minute");
-    expect(html).toContain("20.0 GB");
+    expect(html).toContain("20.0 / 32.0 GB");
     expect(html).toContain(">free<");
-    expect(html).toContain("100.0 GB");
-    expect(html).toContain("20.5 GB");
-    expect(html).toContain("assigned on a 15.3 GB host");
+    expect(html).toContain("100.0 / 200.0 GB");
+    expect(html).toContain("20.5 / 15.3 GB");
+    expect(html).toContain("assigned on this host");
     expect(html).toContain("Overcommitted");
     expect(html).not.toContain("Log rotate");
     expect(html).not.toContain("qmcreate");
@@ -271,13 +271,10 @@ describe("master panel", () => {
     expect(html).toContain("VM 216");
     expect(html).toContain("media");
     expect(html).toContain("house");
-    expect(html).toContain('href="http://10.0.0.30:32400/web"');
-    expect(html).toContain('target="_blank"');
-    expect(html).toContain('rel="noopener noreferrer"');
+    expect(html).not.toContain(">Open<");
     expect(html).toContain("—");
-    expect(html).toContain(">Open<");
-    expect(html).toContain("Move up");
-    expect(html).toContain("Move down");
+    expect(html).toContain('aria-label="Move media up"');
+    expect(html).toContain('aria-label="Move media down"');
     expect(html).not.toContain("nextcloud:apache");
     expect(html).toContain('aria-label="Filter"');
     expect(html).not.toContain("api/push");
@@ -286,13 +283,17 @@ describe("master panel", () => {
     const media = page("/guests/201");
     const house = page("/guests/216");
     expect(html).toContain("Machines");
-    expect(html).toContain("Sort");
+    expect(html).toContain("Sort by");
     expect(html).toContain(">Boot<");
     expect(html).toContain(">Address<");
-    expect(html).toContain("Save");
+    expect(html).not.toContain(">Save<");
     expect(html).not.toContain("the next time the host starts");
     expect(html).not.toContain("Nothing restarts now");
     expect(media).toContain("nextcloud:apache");
+    expect(media).toContain('aria-label="Open media"');
+    expect(media).toContain('href="http://10.0.0.30:32400/web"');
+    expect(media).toContain('target="_blank"');
+    expect(media).toContain('rel="noopener noreferrer"');
     expect(media).toContain("Update this machine");
     expect(media).toContain("Blast radius");
     expect(media).not.toContain("Start the machine update");
@@ -402,6 +403,10 @@ describe("master panel", () => {
     expect(html).toContain("Disk check runs every two minutes.");
     expect(html).not.toContain("Log rotate");
     expect(html).not.toContain("systemd tmpfiles");
+    expect(html).toContain("Skip next Sunday");
+    expect(html).toContain("Move weekly time");
+    expect(html).toContain("Schedule one run");
+    expect(html).not.toContain("The coming Sunday update will not run");
     expect(html).not.toContain("Start the update");
     expect(html).not.toContain("restarts playback");
     const empty = page("/jobs", {
@@ -480,8 +485,8 @@ describe("master panel", () => {
     expect(storage).toContain("Run disk check");
     expect(storage).toContain("Nothing is backed up. There is no backup job, and no machine has a second copy.");
     expect(storage).not.toContain("<th>Where</th>");
-    expect(storage).toContain("20.0 GB");
-    expect(storage).toContain("free of 32.0 GB");
+    expect(storage).toContain("20.0 / 32.0 GB");
+    expect(storage).toContain(">free<");
     const copied = page("/storage", {
       ...fixture,
       protection: {

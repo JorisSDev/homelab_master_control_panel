@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Badge, Meter, Page } from "../components/Chrome";
+import { Button } from "../components/ui/button";
 import { awayLines, digestOf } from "../lib";
 import type { AttentionItem, ViewState } from "../types";
 
@@ -37,9 +38,9 @@ export function Overview({
               <p key={line}>{line}</p>
             ))}
           </div>
-          <button type="button" className="quiet-button" onClick={() => away.dismiss()}>
+          <Button type="button" variant="outline" onClick={() => away.dismiss()}>
             Dismiss
-          </button>
+          </Button>
         </div>
       ) : null}
       <p className="section-label">Attention</p>
@@ -185,7 +186,7 @@ function Space({ label, free, total }: { label: string; free: string; total: str
   if (free && total) {
     return (
       <div className="figure">
-        <Meter label={label} free={free} total={total} caption={`${free} free`} />
+        <Meter label={label} free={free} total={total} caption="free" />
       </div>
     );
   }
@@ -209,7 +210,7 @@ function Memory({ assigned, total, used }: { assigned: string; total: string; us
           free={assigned}
           total={total}
           percent={(assignedN / totalN) * 100}
-          caption={`${assigned} assigned on a ${total} host${over ? ". Overcommitted" : ""}`}
+          caption={`assigned on this host${over ? ". Overcommitted" : ""}`}
         />
       </div>
     );

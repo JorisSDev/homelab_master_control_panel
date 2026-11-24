@@ -1,4 +1,7 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
+import { Button } from "./ui/button";
+import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
+import { Progress } from "./ui/progress";
 
 export function Page({
   title,
@@ -65,24 +68,23 @@ export function Meter({
       : totalN > 0
         ? Math.max(0, Math.min(100, ((totalN - freeN) / totalN) * 100))
         : 0;
-  const text = caption ?? (free && total ? `${free} free of ${total}` : "Unknown");
-  const big = lead(text);
-  const rest = text.startsWith(big) ? text.slice(big.length).replace(/^[\s,·-]+/, "") : "";
+  const headline = share(free, total);
   return (
     <div className="meter">
       <span className="section-label">{label}</span>
-      <strong className="figure-value num">{big}</strong>
-      {rest ? <span className="meta">{rest}</span> : null}
-      <div className="meter-track" aria-hidden="true">
-        <span className={low ? "meter-fill low" : "meter-fill"} style={{ width: `${used}%` }} />
-      </div>
+      <strong className="figure-value num">{headline}</strong>
+      <span className="meta">{caption || "free"}</span>
+      <Progress value={used} low={low} />
     </div>
   );
 }
 
-function lead(text: string) {
-  const match = text.match(/^[\d.]+(?:\s*(?:TB|GB|MB|%))?/i);
-  return match?.[0] || text;
+function share(free: string, total: string) {
+  const amount = free.trim().match(/^[\d.]+/)?.[0];
+  if (!amount || !total.trim()) {
+    return free || "Unknown";
+  }
+  return `${amount} / ${total.trim()}`;
 }
 
 export function Empty({ children }: { children: string }) {
@@ -104,57 +106,20 @@ export function Confirm({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const confirmRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    confirmRef.current?.focus();
-  }, []);
   return (
-    <div
-      className="scrim"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) {
-          onCancel();
-        }
-      }}
-    >
-      <div
-        className="confirm"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-title"
-        ref={dialogRef}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            onCancel();
-            return;
-          }
-          if (event.key !== "Tab" || !dialogRef.current) {
-            return;
-          }
-          const items = [...dialogRef.current.querySelectorAll<HTMLButtonElement>("button")];
-          const first = items[0];
-          const last = items[items.length - 1];
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault();
-            last?.focus();
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault();
-            first?.focus();
-          }
-        }}
-      >
-        <h3 id="confirm-title">{title}</h3>
-        {children}
-        <div className="row-actions">
-          <button type="button" className="quiet-button" onClick={onCancel}>
+    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
+      <DialogContent>
+        <DialogTitle>{title}</DialogTitle>
+        <div className="mt-3 grid gap-3">{children}</div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onCancel}>
             Cancel
-          </button>
-          <button type="button" ref={confirmRef} disabled={busy} onClick={onConfirm}>
+          </Button>
+          <Button type="button" disabled={busy} onClick={onConfirm}>
             {confirmLabel}
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Badge, Confirm, Empty, Page } from "../components/Chrome";
+import { Button } from "../components/ui/button";
 import { postJson } from "../lib";
 import type { CalendarRule, ViewState } from "../types";
 
@@ -16,7 +17,7 @@ export function Jobs({
   const update = path === "/jobs/update" || path === "/jobs";
   return (
     <Page title="Jobs" context="Scheduled work, and the meaning of the last result.">
-      {path === "/jobs" ? <Month state={state} /> : null}
+      {path === "/jobs" ? <Month state={state} onState={onState} /> : null}
       {scan ? <ScanDossier state={state} /> : null}
       {update ? <UpdateDossier state={state} onState={onState} /> : null}
     </Page>
@@ -39,7 +40,7 @@ const MONTHS = [
 ];
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function Month({ state }: { state: ViewState }) {
+function Month({ state, onState }: { state: ViewState; onState: (next: ViewState) => void }) {
   const rules = state.calendar?.rules || [];
   const standing = state.calendar?.standing || [];
   const [cursor, setCursor] = useState(() => {
@@ -58,20 +59,20 @@ function Month({ state }: { state: ViewState }) {
       </>
     );
   }
-  const cells = monthCells(cursor.year, cursor.month, rules);
+  const cells = monthCells(cursor.year, cursor.month, rules, state.schedule);
   const legend = dailyLegend(rules);
   return (
     <div className="calendar">
       <div className="calendar-nav">
-        <button type="button" className="quiet-button" onClick={() => setCursor((current) => shiftMonth(current, -1))}>
+        <Button type="button" variant="outline" onClick={() => setCursor((current) => shiftMonth(current, -1))}>
           Previous month
-        </button>
+        </Button>
         <p className="calendar-title">
           {MONTHS[cursor.month]} {cursor.year}
         </p>
-        <button type="button" className="quiet-button" onClick={() => setCursor((current) => shiftMonth(current, 1))}>
+        <Button type="button" variant="outline" onClick={() => setCursor((current) => shiftMonth(current, 1))}>
           Next month
-        </button>
+        </Button>
       </div>
       {legend ? <p className="calendar-legend">{legend}</p> : null}
       <div className="calendar-grid" role="grid" aria-label={`${MONTHS[cursor.month]} ${cursor.year}`}>
@@ -96,6 +97,7 @@ function Month({ state }: { state: ViewState }) {
           </div>
         ))}
       </div>
+      <ScheduleForm state={state} onState={onState} />
       {standing.map((line) => (
         <p key={line} className="standing">
           {line}
@@ -110,7 +112,7 @@ function shiftMonth(current: { year: number; month: number }, delta: number) {
   return { year: next.getFullYear(), month: next.getMonth() };
 }
 
-function monthCells(year: number, month: number, rules: CalendarRule[]) {
+function monthCells(year: number, month: number, rules: CalendarRule[], schedule?: ViewState["schedule"]) {
   const first = new Date(year, month, 1);
   const lead = (first.getDay() + 6) % 7;
   const start = new Date(year, month, 1 - lead);
@@ -126,7 +128,7 @@ function monthCells(year: number, month: number, rules: CalendarRule[]) {
       day: date.getDate(),
       outside: date.getMonth() !== month,
       today: date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate(),
-      jobs: jobsOn(date, rules),
+      jobs: markedJobs(dateKey(date), jobsOn(date, rules), schedule),
     });
   }
   return cells;
@@ -138,6 +140,14 @@ function dailyLegend(rules: CalendarRule[]) {
     return "";
   }
   return `Every day · ${daily.map((rule) => `${rule.label} ${when(rule)}`).join(" · ")}`;
+}
+
+function markedJobs(key: string, jobs: string[], schedule?: ViewState["schedule"]) {
+  const next = jobs.map((job) => (schedule?.skip === key && job.startsWith("Update") ? "Skipped" : job));
+  if (schedule?.once === key && schedule.once_time) {
+    next.push(`Update ${schedule.once_time}`);
+  }
+  return next;
 }
 
 function jobsOn(date: Date, rules: CalendarRule[]) {
@@ -157,6 +167,105 @@ function dateKey(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}-${month}-${day}`;
+}
+
+const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function ScheduleForm({ state, onState }: { state: ViewState; onState: (next: ViewState) => void }) {
+  const weekly = state.schedule?.weekly;
+  const [weekday, setWeekday] = useState(weekly?.weekday ?? 6);
+  const [time, setTime] = useState(weekly?.time || "06:00");
+  const [date, setDate] = useState("");
+  const [onceTime, setOnceTime] = useState("06:00");
+  const [pending, setPending] = useState<"skip" | "move" | "once" | "">("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function apply() {
+    setBusy(true);
+    setMessage("");
+    const body =
+      pending === "skip"
+        ? { confirm: true, action: "skip", weekday: 6 }
+        : pending === "move"
+          ? { confirm: true, action: "move", weekday, time }
+          : { confirm: true, action: "once", date, time: onceTime };
+    const result = await postJson("/api/jobs/update/schedule", body);
+    setBusy(false);
+    setPending("");
+    if (!result.ok) {
+      setMessage(String(result.data.error || "The schedule was not changed."));
+      return;
+    }
+    const response = await fetch("/api/state", { cache: "no-store" });
+    if (response.ok) {
+      onState((await response.json()) as ViewState);
+    }
+    setMessage(pending === "once" ? "The extra run was scheduled." : "The Sunday update was rescheduled.");
+  }
+
+  return (
+    <div className="schedule">
+      <p className="section-label">Sunday update</p>
+      {message ? <p className={message.endsWith(".") && !message.includes("not") ? "ok" : "bad"}>{message}</p> : null}
+      <div className="row-actions">
+        <Button type="button" variant="outline" disabled={busy} onClick={() => setPending("skip")}>
+          Skip next Sunday
+        </Button>
+      </div>
+      <div className="schedule-row">
+        <label>
+          Weekly day
+          <select value={weekday} onChange={(event) => setWeekday(Number(event.target.value))}>
+            {WEEKDAY_NAMES.map((name, index) => (
+              <option key={name} value={index}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Weekly time
+          <input type="time" value={time} onChange={(event) => setTime(event.target.value)} />
+        </label>
+        <Button type="button" variant="outline" disabled={busy} onClick={() => setPending("move")}>
+          Move weekly time
+        </Button>
+      </div>
+      <div className="schedule-row">
+        <label>
+          Extra date
+          <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+        </label>
+        <label>
+          Extra time
+          <input type="time" value={onceTime} onChange={(event) => setOnceTime(event.target.value)} />
+        </label>
+        <Button type="button" variant="outline" disabled={busy || !date} onClick={() => setPending("once")}>
+          Schedule one run
+        </Button>
+      </div>
+      {pending === "skip" ? (
+        <Confirm title="Skip the next Sunday" confirmLabel="Skip next Sunday" busy={busy} onCancel={() => setPending("")} onConfirm={() => void apply()}>
+          <p>The coming Sunday update will not run. The week after returns to the normal time.</p>
+        </Confirm>
+      ) : null}
+      {pending === "move" ? (
+        <Confirm title="Move the weekly update" confirmLabel="Move weekly time" busy={busy} onCancel={() => setPending("")} onConfirm={() => void apply()}>
+          <p>
+            This changes the weekly update to {WEEKDAY_NAMES[weekday]} at {time}. Other jobs stay where they are.
+          </p>
+        </Confirm>
+      ) : null}
+      {pending === "once" ? (
+        <Confirm title="Schedule one update" confirmLabel="Schedule one run" busy={busy} onCancel={() => setPending("")} onConfirm={() => void apply()}>
+          <p>
+            This starts the update on {date} at {onceTime}. It restarts playback, recreates Compose services, and has no vzdump rollback.
+          </p>
+        </Confirm>
+      ) : null}
+    </div>
+  );
 }
 
 function guestName(state: ViewState, id: string) {
@@ -223,9 +332,9 @@ function ScanDossier({ state }: { state: ViewState }) {
         <div className="page-action">
           <Badge value={state.scan.status} />
           {state.scan.idle ? (
-            <button type="button" disabled={busy} onClick={() => void run()}>
+            <Button type="button" disabled={busy} onClick={() => void run()}>
               Run the scan
-            </button>
+            </Button>
           ) : null}
         </div>
       </header>
@@ -310,16 +419,16 @@ function UpdateDossier({ state, onState }: { state: ViewState; onState: (next: V
         </div>
         <div className="page-action">
           <Badge value={state.update.status} />
-          <button type="button" className="quiet-button" disabled={busy !== ""} onClick={() => void check()}>
+          <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => void check()}>
             Check for updates
-          </button>
-          <button type="button" className="quiet-button" disabled={busy !== ""} onClick={() => setDry(true)}>
+          </Button>
+          <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => setDry(true)}>
             Dry run
-          </button>
+          </Button>
           {state.update.idle ? (
-            <button type="button" disabled={busy !== ""} onClick={() => setConfirm(true)}>
+            <Button type="button" disabled={busy !== ""} onClick={() => setConfirm(true)}>
               Update all
-            </button>
+            </Button>
           ) : null}
         </div>
       </header>

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Empty, Page } from "../components/Chrome";
+import { Button } from "../components/ui/button";
 import { postJson } from "../lib";
 import type { ViewState } from "../types";
 
@@ -66,9 +67,9 @@ export function SystemPage({ state }: { state: ViewState }) {
       title="System"
       context={state.panel.version ? `Version ${state.panel.version}` : "Panel"}
       action={
-        <button type="button" className="quiet-button" onClick={() => void signOut()}>
+        <Button type="button" variant="outline" onClick={() => void signOut()}>
           Sign out
-        </button>
+        </Button>
       }
     >
       <p>
@@ -81,9 +82,9 @@ export function SystemPage({ state }: { state: ViewState }) {
       {state.panel.error ? <p className="quiet">{state.panel.error}</p> : null}
       {message ? <p className={message.startsWith("Installing") ? "ok" : "bad"}>{message}</p> : null}
       {state.panel.update_available ? (
-        <button type="button" disabled={busy} onClick={() => void install()}>
+        <Button type="button" disabled={busy} onClick={() => void install()}>
           Install this version
-        </button>
+        </Button>
       ) : null}
       <p className="section-label">Password</p>
       <form className="password-form" onSubmit={(event) => void changePassword(event)}>
@@ -99,9 +100,9 @@ export function SystemPage({ state }: { state: ViewState }) {
           Confirm password
           <input type="password" name="confirm" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} />
         </label>
-        <button type="submit" disabled={passwordBusy || !current || !next || !confirm}>
+        <Button type="submit" disabled={passwordBusy || !current || !next || !confirm}>
           Change password
-        </button>
+        </Button>
       </form>
       {passwordMessage ? <p className={passwordMessage.startsWith("The password was changed") ? "ok" : "bad"}>{passwordMessage}</p> : null}
       <p className="section-label">Operator log</p>

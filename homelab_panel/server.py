@@ -15,6 +15,7 @@ import mimetypes
 import re
 import socket
 import subprocess
+import sys
 import threading
 import time
 import zipfile
@@ -37,6 +38,7 @@ from homelab_panel.config import ConfigError, load_config, save_password_hash
 from homelab_panel.guests import check_guests, reboot_required, run_guest, running_container, startup_commands, update_guest
 from homelab_panel.inventory import GUEST_ID, check_packages, wanted_ids
 from homelab_panel.self_update import UpdateError, describe, install_release
+from homelab_panel.schedule import apply_schedule, update_due
 from homelab_panel.signals import parse_resolv, pins_match, report_text
 from homelab_panel.state import build_state
 from homelab_panel.store import append_operator, load_checks, load_sessions, read_operator, save_checks, save_sessions
@@ -164,6 +166,8 @@ class Panel:
                 return self._check_guests()
             if method == "POST" and clean == "/api/guests/order":
                 return self._order_guests(body)
+            if method == "POST" and clean == "/api/jobs/update/schedule":
+                return self._schedule_update(body)
             if method == "POST" and clean == "/api/password":
                 return self._change_password(body, headers)
             guest_update = re.fullmatch(r"/api/guests/([^/]+)/update", clean)
@@ -470,6 +474,29 @@ class Panel:
             rows = [{"token": token, "expiry": expiry} for token, expiry in self._sessions.items()]
         save_sessions(self.config, rows)
 
+    def _schedule_update(self, body):
+        if len(body) > BODY_LIMIT:
+            return self._json(400, {"error": "The request is too large."})
+        payload = _payload(body)
+        if payload is None or payload.get("confirm") is not True:
+            return self._json(400, {"error": "The schedule was not confirmed."})
+        program = Path(sys.argv[0]).resolve()
+        status, result = apply_schedule(
+            self.config,
+            str(payload.get("action") or ""),
+            payload,
+            self.starter,
+            executable=sys.executable,
+            program=str(program),
+            root=self.config.get("schedule_root") or "/",
+        )
+        if status == 202:
+            self._log("Changed the Sunday update schedule")
+            with self._lock:
+                self._state = None
+                self._at = 0.0
+        return self._json(status, result)
+
     def _order_guests(self, body):
         if self.guest_runner is None:
             return self._json(400, {"error": "This copy cannot set boot order."})
@@ -672,7 +699,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Homelab master control panel")
     parser.add_argument("--config")
     parser.add_argument("--update", action="store_true")
+    parser.add_argument("--update-due", action="store_true")
     args = parser.parse_args(argv)
+    if args.update_due:
+        return _update_due(args.config)
     if args.update:
         return _update(args.config)
     if not args.config:
@@ -684,6 +714,19 @@ def main(argv=None):
     if not config.get("password_hash"):
         raise SystemExit("config needs a password_hash")
     serve(config)
+
+
+def _update_due(config_path):
+    if not config_path:
+        try:
+            config_path = _config_path_from_unit(Path("/etc/systemd/system/homelab-panel.service"))
+        except SystemExit:
+            return 0
+    try:
+        config = load_config(config_path)
+    except ConfigError:
+        return 0
+    return 0 if update_due(config) else 1
 
 
 def _update(config_path):

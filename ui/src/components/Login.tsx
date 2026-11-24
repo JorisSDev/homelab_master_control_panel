@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "./ui/button";
 import { Logo } from "./Logo";
 
 export function Login({
@@ -39,9 +40,9 @@ export function Login({
           <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
           Remember this device
         </label>
-        <button type="submit" disabled={busy || password.length === 0}>
+        <Button type="submit" disabled={busy || password.length === 0}>
           Sign in
-        </button>
+        </Button>
       </form>
       {error ? <p className="bad">{error}</p> : null}
     </main>
