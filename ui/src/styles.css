@@ -795,9 +795,12 @@ th.num {
   aside {
     position: fixed;
     z-index: 2;
+    top: auto;
     left: 0;
     right: 0;
     bottom: 0;
+    height: auto;
+    overflow: visible;
     flex-direction: row;
     align-items: center;
     gap: 0.4rem;
