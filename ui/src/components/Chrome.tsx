@@ -66,11 +66,13 @@ export function Meter({
         ? Math.max(0, Math.min(100, ((totalN - freeN) / totalN) * 100))
         : 0;
   const text = caption ?? (free && total ? `${free} free of ${total}` : "Unknown");
+  const big = lead(text);
+  const rest = text.startsWith(big) ? text.slice(big.length).replace(/^[\s,·-]+/, "") : "";
   return (
     <div className="meter">
       <span className="section-label">{label}</span>
-      <strong className="figure-value num">{lead(text)}</strong>
-      <span className="meta">{text}</span>
+      <strong className="figure-value num">{big}</strong>
+      {rest ? <span className="meta">{rest}</span> : null}
       <div className="meter-track" aria-hidden="true">
         <span className={low ? "meter-fill low" : "meter-fill"} style={{ width: `${used}%` }} />
       </div>

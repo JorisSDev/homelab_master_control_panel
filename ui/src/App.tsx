@@ -22,6 +22,7 @@ const NAV = [
   ["/reach", "Reach"],
   ["/storage", "Storage"],
   ["/jobs", "Jobs"],
+  ["/system", "System"],
 ] as const;
 
 export function App({ initial = null, live = true, initialPath = "/" }: Props) {

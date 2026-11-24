@@ -166,7 +166,7 @@ describe("master panel", () => {
     };
     const html = page("/", shown);
     const nav = html.slice(html.indexOf("<nav>"), html.indexOf("</nav>"));
-    for (const label of ["Overview", "Machines", "Reach", "Storage", "Jobs"]) {
+    for (const label of ["Overview", "Machines", "Reach", "Storage", "Jobs", "System"]) {
       expect(nav).toContain(`>${label}<`);
     }
     expect(nav).not.toContain(">Guests<");
@@ -183,9 +183,11 @@ describe("master panel", () => {
     expect(html).toContain("Sun 04 Jan 06:00");
     expect(html).toContain("Proxmox package refresh");
     expect(html).toContain("Last minute");
-    expect(html).toContain("20.0 GB free");
-    expect(html).toContain("100.0 GB free");
-    expect(html).toContain("20.5 GB assigned on a 15.3 GB host");
+    expect(html).toContain("20.0 GB");
+    expect(html).toContain(">free<");
+    expect(html).toContain("100.0 GB");
+    expect(html).toContain("20.5 GB");
+    expect(html).toContain("assigned on a 15.3 GB host");
     expect(html).toContain("Overcommitted");
     expect(html).not.toContain("Log rotate");
     expect(html).not.toContain("qmcreate");
@@ -478,7 +480,8 @@ describe("master panel", () => {
     expect(storage).toContain("Run disk check");
     expect(storage).toContain("Nothing is backed up. There is no backup job, and no machine has a second copy.");
     expect(storage).not.toContain("<th>Where</th>");
-    expect(storage).toContain("20.0 GB free of 32.0 GB");
+    expect(storage).toContain("20.0 GB");
+    expect(storage).toContain("free of 32.0 GB");
     const copied = page("/storage", {
       ...fixture,
       protection: {
