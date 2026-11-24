@@ -769,7 +769,7 @@ th.num {
     border-top: 1px solid var(--line);
   }
 
-  .brand span,
+  .brand,
   .version {
     position: absolute;
     width: 1px;
@@ -779,17 +779,15 @@ th.num {
   }
 
   nav {
-    flex-direction: row;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     width: 100%;
     margin: 0;
-    justify-content: space-between;
-    overflow-x: auto;
   }
 
   nav a {
-    flex: 1 0 auto;
     justify-content: center;
-    padding: 0.45rem 0.4rem;
+    padding: 0.45rem 0.2rem;
     font-size: 0.82rem;
     white-space: nowrap;
   }
@@ -812,6 +810,14 @@ th.num {
   .gate input,
   .password-form input {
     min-height: 44px;
+  }
+
+  .shell {
+    padding-bottom: 7.5rem;
+  }
+
+  nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .figures,
