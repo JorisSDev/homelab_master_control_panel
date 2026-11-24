@@ -34,7 +34,7 @@ export function Storage({ state }: { state: ViewState }) {
         ))}
       </div>
       <article className="dossier">
-        <h2>Disk shelf</h2>
+        <p className="section-label">Disk shelf</p>
         <p>{das?.summary || "The disk shelf has not been read."}</p>
         {das?.speeds?.length ? <p>{das.speeds.join(", ")}</p> : null}
         {das?.faults ? <p>{das.faults} bus errors.</p> : null}
@@ -51,7 +51,7 @@ export function Storage({ state }: { state: ViewState }) {
           </ul>
         ) : null}
       </article>
-      <h2>Protection</h2>
+      <p className="section-label">Protection</p>
       {hasProtection(protection) ? (
         <>
           <table>

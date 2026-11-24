@@ -34,6 +34,17 @@ export function Guests({
   const open = rows.find((row) => row.id === guestId) || state.services.rows.find((row) => row.id === guestId);
   const canDrag = mode === "boot" && query.trim() === "";
 
+  function shift(id: string, direction: -1 | 1) {
+    setOrder((current) => {
+      const index = current.indexOf(id);
+      const next = index + direction;
+      if (index < 0 || next < 0 || next >= current.length) {
+        return current;
+      }
+      return reorderIds(current, id, current[next]);
+    });
+  }
+
   async function save() {
     setBusy(true);
     setMessage("");
@@ -79,55 +90,68 @@ export function Guests({
       </div>
       {message ? <p className={message.startsWith("Saved") ? "ok" : "bad"}>{message}</p> : null}
       <div className={open ? "split" : ""}>
-        <ol className="sequence">
+        <ol className="machines">
           {rows.length === 0 ? <Empty>No machines were reported.</Empty> : null}
-          {rows.map((row) => (
-            <li
-              key={row.id}
-              className={row.id === guestId ? "selected" : ""}
-              draggable={canDrag}
-              onDragStart={() => {
-                dragId.current = row.id;
-              }}
-              onDragOver={(event) => {
-                if (canDrag) {
-                  event.preventDefault();
-                }
-              }}
-              onDrop={() => {
-                const from = dragId.current;
-                dragId.current = "";
-                if (canDrag && from) {
-                  setOrder((current) => reorderIds(current, from, row.id));
-                }
-              }}
-            >
-              <a
-                href={`/guests/${row.id}`}
-                onClick={(event) => {
-                  event.preventDefault();
-                  go(`/guests/${row.id}`);
+          {rows.map((row) => {
+            const index = order.indexOf(row.id);
+            const kindLine = `${row.kind === "vm" ? "VM" : "CT"} ${row.id}`;
+            return (
+              <li
+                key={row.id}
+                className={row.id === guestId ? "machine selected" : "machine"}
+                draggable={canDrag}
+                onDragStart={() => {
+                  dragId.current = row.id;
+                }}
+                onDragOver={(event) => {
+                  if (canDrag) {
+                    event.preventDefault();
+                  }
+                }}
+                onDrop={() => {
+                  const from = dragId.current;
+                  dragId.current = "";
+                  if (canDrag && from) {
+                    setOrder((current) => reorderIds(current, from, row.id));
+                  }
                 }}
               >
-                <span className="num">{machineMark(mode, Math.max(order.indexOf(row.id), 0) + 1, row.address || "")}</span>
-                <span>
-                  <strong>{row.name}</strong>
-                  <span className="note">
-                    {row.kind === "vm" ? "VM" : "CT"} {row.id}
-                    {row.role ? ` · ${row.role}` : ""}
-                    {row.services.length ? ` · ${row.services.join(", ")}` : ""}
-                    {` · ${row.memory || "—"}`}
+                <a
+                  className="machine-id"
+                  href={`/guests/${row.id}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    go(`/guests/${row.id}`);
+                  }}
+                >
+                  <span className="machine-order num">{machineMark("boot", Math.max(index, 0) + 1, "")}</span>
+                  <span>
+                    <strong>{row.name}</strong>
+                    <span className="meta">{mode === "address" ? machineMark("address", 0, row.address || "") : kindLine}</span>
                   </span>
-                </span>
-                <Badge value={row.status} />
-              </a>
-              {safeHref(row.url) ? (
-                <a className="text-link" href={safeHref(row.url)} target="_blank" rel="noopener noreferrer">
-                  Open the service
                 </a>
-              ) : null}
-            </li>
-          ))}
+                <Badge value={row.status} />
+                <span className="machine-memory num">{row.memory || "—"}</span>
+                {canDrag ? (
+                  <span className="machine-move">
+                    <button type="button" className="quiet-button" disabled={index <= 0} onClick={() => shift(row.id, -1)}>
+                      Move up
+                    </button>
+                    <button type="button" className="quiet-button" disabled={index < 0 || index >= order.length - 1} onClick={() => shift(row.id, 1)}>
+                      Move down
+                    </button>
+                  </span>
+                ) : null}
+                {safeHref(row.url) ? (
+                  <a className="text-link" href={safeHref(row.url)} target="_blank" rel="noopener noreferrer">
+                    Open
+                  </a>
+                ) : (
+                  <span />
+                )}
+              </li>
+            );
+          })}
         </ol>
         {open ? <Dossier row={open} state={state} /> : null}
       </div>
@@ -187,8 +211,8 @@ function Dossier({ row, state }: { row: ServiceRow; state: ViewState }) {
     <article className="dossier">
       <header className="page-head">
         <div>
-          <h2>{row.name}</h2>
-          <p className="quiet">
+          <strong className="machine-title">{row.name}</strong>
+          <p className="meta">
             {row.kind === "vm" ? "VM" : "CT"} {row.id}
             {row.role ? ` · ${row.role}` : ""}
           </p>
@@ -213,7 +237,7 @@ function Dossier({ row, state }: { row: ServiceRow; state: ViewState }) {
           </a>
         </p>
       ) : null}
-      <h3>Blast radius</h3>
+      <p className="section-label">Blast radius</p>
       {(row.blast || []).length === 0 ? <Empty>No later guests or shared disks were recorded.</Empty> : null}
       <ul>
         {(row.blast || []).map((line) => (

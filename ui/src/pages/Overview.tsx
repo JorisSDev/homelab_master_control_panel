@@ -42,6 +42,7 @@ export function Overview({
           </button>
         </div>
       ) : null}
+      <p className="section-label">Attention</p>
       {attention.length === 0 ? (
         <p>The house is clear.</p>
       ) : (
@@ -62,18 +63,19 @@ export function Overview({
           ))}
         </ul>
       )}
+      <p className="section-label">Host</p>
       <div className="figures">
         <div className="figure">
-          <span>Load</span>
-          <strong className="num">{figures?.load || state.health.load || "Unknown"}</strong>
-          <span className="quiet">Last minute</span>
+          <span className="section-label">Load</span>
+          <strong className="figure-value num">{figures?.load || state.health.load || "Unknown"}</strong>
+          <span className="meta">Last minute</span>
         </div>
         <Memory assigned={figures?.memory_assigned || ""} total={figures?.memory_total || state.health.memory_total} used={state.health.memory_used} />
         <Space label="Root" free={figures?.root_free || state.health.disk_free} total={figures?.root_total || state.health.disk_total} />
         <Space label="Disk shelf" free={shelfFree(state)} total={shelfTotal(state)} />
       </div>
-      <div className="strip">
-        <h3>Coming up</h3>
+      <div className="strip coming">
+        <p className="section-label">Coming up</p>
         {coming.length === 0 ? (
           <p className="quiet">No house jobs were read.</p>
         ) : (

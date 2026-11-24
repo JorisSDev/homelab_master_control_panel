@@ -49,6 +49,7 @@ export function Reach({ state, onState }: { state: ViewState; onState: (next: Vi
       {!reach ? <Empty>Reach has not been read.</Empty> : null}
       {reach ? (
         <div className="pinned">
+          <p className="section-label">Network</p>
           <p>
             Tunnel {reach.tunnel.guest || "not configured"}
             {reach.tunnel.connections === null ? "" : ` · ${reach.tunnel.connections} connections`}
@@ -82,16 +83,17 @@ export function Reach({ state, onState }: { state: ViewState; onState: (next: Vi
           ) : null}
           {rows.length > 0 ? (
             <>
-              <p className="quiet">Last down is within 30 days.</p>
+              <p className="section-label">Monitors</p>
+              <p className="meta">Last down is within 30 days.</p>
               <table>
               <thead>
                 <tr>
                   <th>Service</th>
                   <th>LAN</th>
                   <th>Status</th>
-                  <th>24h</th>
-                  <th>7d</th>
-                  <th>Last down</th>
+                  <th className="num">24h</th>
+                  <th className="num">7d</th>
+                  <th className="num">Last down</th>
                 </tr>
               </thead>
               <tbody>

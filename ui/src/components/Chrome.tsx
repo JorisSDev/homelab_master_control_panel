@@ -34,7 +34,12 @@ export function Badge({ value }: { value: string }) {
       : tone.includes("run")
         ? "running"
         : "up";
-  return <span className={`badge tone-${kind}`}>{value}</span>;
+  return (
+    <span className={`status tone-${kind}`}>
+      <span className="status-mark" aria-hidden="true" />
+      {value}
+    </span>
+  );
 }
 
 export function Meter({
@@ -63,15 +68,19 @@ export function Meter({
   const text = caption ?? (free && total ? `${free} free of ${total}` : "Unknown");
   return (
     <div className="meter">
-      <div className="meter-label">
-        <span>{label}</span>
-        <span className="num">{text}</span>
-      </div>
+      <span className="section-label">{label}</span>
+      <strong className="figure-value num">{lead(text)}</strong>
+      <span className="meta">{text}</span>
       <div className="meter-track" aria-hidden="true">
         <span className={low ? "meter-fill low" : "meter-fill"} style={{ width: `${used}%` }} />
       </div>
     </div>
   );
+}
+
+function lead(text: string) {
+  const match = text.match(/^[\d.]+(?:\s*(?:TB|GB|MB|%))?/i);
+  return match?.[0] || text;
 }
 
 export function Empty({ children }: { children: string }) {

@@ -272,9 +272,11 @@ describe("master panel", () => {
     expect(html).toContain('href="http://10.0.0.30:32400/web"');
     expect(html).toContain('target="_blank"');
     expect(html).toContain('rel="noopener noreferrer"');
-    expect(html).toContain("nextcloud:apache");
     expect(html).toContain("—");
-    expect(html).not.toContain(">Open<");
+    expect(html).toContain(">Open<");
+    expect(html).toContain("Move up");
+    expect(html).toContain("Move down");
+    expect(html).not.toContain("nextcloud:apache");
     expect(html).toContain('aria-label="Filter"');
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
@@ -288,6 +290,7 @@ describe("master panel", () => {
     expect(html).toContain("Save");
     expect(html).not.toContain("the next time the host starts");
     expect(html).not.toContain("Nothing restarts now");
+    expect(media).toContain("nextcloud:apache");
     expect(media).toContain("Update this machine");
     expect(media).toContain("Blast radius");
     expect(media).not.toContain("Start the machine update");

@@ -85,7 +85,7 @@ export function SystemPage({ state }: { state: ViewState }) {
           Install this version
         </button>
       ) : null}
-      <h2>Password</h2>
+      <p className="section-label">Password</p>
       <form className="password-form" onSubmit={(event) => void changePassword(event)}>
         <label>
           Current password
@@ -104,7 +104,7 @@ export function SystemPage({ state }: { state: ViewState }) {
         </button>
       </form>
       {passwordMessage ? <p className={passwordMessage.startsWith("The password was changed") ? "ok" : "bad"}>{passwordMessage}</p> : null}
-      <h2>Operator log</h2>
+      <p className="section-label">Operator log</p>
       {(state.operator || []).length === 0 ? <Empty>No panel actions have been recorded.</Empty> : null}
       <ul>
         {(state.operator || []).map((item) => (

@@ -180,8 +180,8 @@ function HostPackages({ state }: { state: ViewState }) {
       <thead>
         <tr>
           <th>Host packages</th>
-          <th>Current</th>
-          <th>Candidate</th>
+          <th className="num">Current</th>
+          <th className="num">Candidate</th>
           <th>Kind</th>
         </tr>
       </thead>
@@ -217,8 +217,8 @@ function ScanDossier({ state }: { state: ViewState }) {
     <article className="dossier">
       <header className="page-head">
         <div>
-          <h2>Scan</h2>
-          <p className="quiet">{state.scan.purpose}</p>
+          <p className="section-label">Scan</p>
+          <p className="meta">{state.scan.purpose}</p>
         </div>
         <div className="page-action">
           <Badge value={state.scan.status} />
@@ -305,8 +305,8 @@ function UpdateDossier({ state, onState }: { state: ViewState; onState: (next: V
     <article className="dossier">
       <header className="page-head">
         <div>
-          <h2>Sunday update</h2>
-          <p className="quiet">Next run {state.update.next}</p>
+          <p className="section-label">Sunday update</p>
+          <p className="meta">Next run {state.update.next}</p>
         </div>
         <div className="page-action">
           <Badge value={state.update.status} />
@@ -339,8 +339,8 @@ function UpdateDossier({ state, onState }: { state: ViewState; onState: (next: V
           <thead>
             <tr>
               <th>Guest</th>
-              <th>Packages</th>
-              <th>Security</th>
+              <th className="num">Packages</th>
+              <th className="num">Security</th>
               <th>Compose</th>
               <th>Reboot</th>
             </tr>
