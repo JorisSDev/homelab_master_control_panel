@@ -233,13 +233,28 @@ def read_render(config, runner, guests):
     return _cached(("render", guest), 60, build)
 
 
+def _metrics_port(value):
+    if isinstance(value, str):
+        value = value.strip()
+        if not value.isdigit():
+            return 2000
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 2000
+    if 1 <= value <= 65535:
+        return value
+    return 2000
+
+
 def read_tunnel(config, runner):
-    guest = str(((config.get("tunnel") or {}).get("guest_id")) or "")
+    tunnel = config.get("tunnel") or {}
+    guest = str(tunnel.get("guest_id") or "")
     if not GUEST_ID.fullmatch(guest):
         return {"connections": None, "detail": ""}
+    port = _metrics_port(tunnel.get("metrics_port"))
 
     def build():
-        command = ["pct", "exec", guest, "--", "wget", "-qO-", "http://127.0.0.1:2000/metrics"]
+        command = ["pct", "exec", guest, "--", "wget", "-qO-", f"http://127.0.0.1:{port}/metrics"]
         try:
             text = runner(command, timeout=4) or ""
         except TypeError:
@@ -249,7 +264,7 @@ def read_tunnel(config, runner):
             return {"connections": None, "detail": "The tunnel metrics were not read."}
         return {"connections": int(match.group(1)), "detail": ""}
 
-    return _cached(("tunnel", guest), 30, build)
+    return _cached(("tunnel", guest, port), 30, build)
 
 
 def read_wan(config, runner):

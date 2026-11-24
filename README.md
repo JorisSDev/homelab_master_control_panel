@@ -44,6 +44,7 @@ Optional keys, all safe to omit:
 - `das.uuid`, `das.mount`, and `das.monitor` describe the disk shelf.
 - `disk_unit` is the systemd unit for Run disk check.
 - `tunnel.guest_id` is the container that runs cloudflared.
+- `tunnel.metrics_port` is an optional cloudflared metrics port from 1 to 65535; when it is omitted or invalid, the panel reads port 2000.
 - `wan.port` and `wan.guest_id` name the intentional WAN listener.
 - `update_script` is the absolute path of the Sunday script, used for a dry run.
 - `scan_coverage` is a list of sentences shown beside a scan result.

@@ -8,7 +8,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from homelab_panel.observe import KUMA_SCRIPT, _CACHE, read_kuma
+from homelab_panel.observe import KUMA_SCRIPT, _CACHE, read_kuma, read_tunnel
 from homelab_panel.signals import (
     blast_lines,
     expand_month,
@@ -256,6 +256,22 @@ class SignalTests(unittest.TestCase):
         lines = blast_lines(guests[0], guests)
         self.assertIn("Starts before 1 later guests", lines)
         self.assertIn("Shares /mnt/storage with media", lines)
+
+    def test_tunnel_metrics_port_overrides_the_default(self):
+        seen = []
+
+        def runner(command, timeout=4):
+            seen.append(command)
+            return "cloudflared_tunnel_ha_connections 4\n"
+
+        _CACHE.clear()
+        try:
+            read_tunnel({"tunnel": {"guest_id": "114", "metrics_port": 20241}}, runner)
+            read_tunnel({"tunnel": {"guest_id": "114"}}, runner)
+        finally:
+            _CACHE.clear()
+        self.assertIn("http://127.0.0.1:20241/metrics", seen[0])
+        self.assertIn("http://127.0.0.1:2000/metrics", seen[1])
 
     def test_report_redacts_addresses_and_secrets(self):
         text = report_text(
