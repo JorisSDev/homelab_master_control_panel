@@ -164,6 +164,7 @@ export type ViewState = {
   figures?: Figures;
   week?: WeekItem[];
   upcoming?: WeekItem[];
+  calendar?: CalendarState;
   reach?: ReachState;
   das?: DasState;
   protection?: ProtectionState;
@@ -191,6 +192,10 @@ export type Figures = {
 
 export type WeekItem = { unit: string; label: string; next: string; soon: boolean };
 
+export type CalendarRule = { label: string; time: string; weekdays: number[] | null; until?: string };
+
+export type CalendarState = { rules: CalendarRule[]; standing: string[] };
+
 export type ReachPath = {
   name: string;
   guest: string;
@@ -201,10 +206,19 @@ export type ReachPath = {
   kuma: string;
 };
 
-export type MonitorRow = { name: string; type: string; status: string; at: string };
+export type MonitorRow = {
+  name: string;
+  type: string;
+  status: string;
+  at: string;
+  uptime_24h?: number | null;
+  uptime_7d?: number | null;
+  last_down?: string;
+};
 
 export type ReachState = {
   paths: ReachPath[];
+  kuma_url?: string;
   monitors: { ok: boolean; error: string; summary: string; rows: MonitorRow[] };
   pins: { checked: boolean; summary: string; rows: { id: string; name: string; ok: boolean }[] };
   multicast_snooping: boolean | null;

@@ -17,18 +17,59 @@ import sqlite3, sys
 path = "/opt/uptime-kuma/data/kuma.db"
 try:
     con = sqlite3.connect("file:" + path + "?mode=ro", uri=True)
+    monitors = list(con.execute("select id, name, type from monitor order by name"))
+    latest = {}
+    for monitor_id, status, when in con.execute(
+        "select h.monitor_id, h.status, h.time from heartbeat h "
+        "join (select monitor_id, max(time) as time from heartbeat group by monitor_id) last "
+        "on last.monitor_id = h.monitor_id and last.time = h.time"
+    ):
+        latest.setdefault(monitor_id, (status, when))
+    windows = {}
+    for monitor_id, up_day, all_day, up_week, all_week, last_down in con.execute(
+        "select monitor_id, "
+        "sum(case when time >= datetime('now', '-24 hours') and status = 1 then 1 else 0 end), "
+        "sum(case when time >= datetime('now', '-24 hours') then 1 else 0 end), "
+        "sum(case when time >= datetime('now', '-7 days') and status = 1 then 1 else 0 end), "
+        "sum(case when time >= datetime('now', '-7 days') then 1 else 0 end), "
+        "max(case when status = 0 then time end) "
+        "from heartbeat where status in (0, 1) and time >= datetime('now', '-30 days') "
+        "group by monitor_id"
+    ):
+        windows[monitor_id] = (up_day, all_day, up_week, all_week, last_down)
 except Exception:
     sys.exit(1)
-query = (
-    "select m.name, m.type, "
-    "(select case status when 1 then 'up' when 0 then 'down' when 2 then 'pending' "
-    "when 3 then 'maintenance' else 'unknown' end from heartbeat h "
-    "where h.monitor_id = m.id order by h.time desc limit 1), "
-    "(select time from heartbeat h where h.monitor_id = m.id order by h.time desc limit 1) "
-    "from monitor m order by m.name"
-)
-for name, kind, status, when in con.execute(query):
-    print("%s\\t%s\\t%s\\t%s" % (name or "", kind or "", status or "unknown", "" if when is None else when))
+
+words = {1: "up", 0: "down", 2: "pending", 3: "maintenance"}
+
+def cell(value):
+    return str(value or "").replace("\\t", " ").replace("\\r", " ").replace("\\n", " ")
+
+def pct(up, total):
+    if not total:
+        return ""
+    return "%.1f" % (100.0 * float(up or 0) / float(total))
+
+for monitor_id, name, kind in monitors:
+    status, when = latest.get(monitor_id, (None, None))
+    window = windows.get(monitor_id)
+    if window:
+        day = pct(window[0], window[1])
+        week = pct(window[2], window[3])
+        last = window[4]
+    else:
+        day = ""
+        week = ""
+        last = ""
+    print("%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s" % (
+        cell(name),
+        cell(kind),
+        words.get(status, "unknown"),
+        cell(when),
+        day,
+        week,
+        cell(last),
+    ))
 """
 
 

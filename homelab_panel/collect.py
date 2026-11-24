@@ -37,6 +37,13 @@ from homelab_panel.signals import parse_guest_conf
 _SERVICE_CACHE = {}
 _SERVICE_CACHE_SECONDS = 60
 _GUEST_TIMEOUT = 4
+_CALENDAR_CACHE = {}
+_CALENDAR_CACHE_SECONDS = 60
+_CALENDAR_UNITS = (
+    "homelab-scan.timer",
+    "homelab-update.timer",
+    "pve-daily-update.timer",
+)
 
 
 def run(command, timeout=8):
@@ -69,6 +76,7 @@ def collect_snapshot(config, runner=run, reader=read_text, note=None):
     logs = config.get("logs") or {}
     snapshot = {
         "timers": timers,
+        "calendars": read_calendars(runner),
         "scan_active": scan_active,
         "scan_since": scan_since,
         "scan_started_us": scan_started,
@@ -164,6 +172,29 @@ def _run_both(command, timeout=8):
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return "", ""
     return completed.stdout or "", completed.stderr or ""
+
+
+def read_calendars(runner=run):
+    if runner is not run:
+        return _read_calendars(runner)
+    now = time.monotonic()
+    cached = _CALENDAR_CACHE.get("house")
+    if cached and now - cached[0] < _CALENDAR_CACHE_SECONDS:
+        return dict(cached[1])
+    found = _read_calendars(runner)
+    _CALENDAR_CACHE["house"] = (now, dict(found))
+    return found
+
+
+def _read_calendars(runner):
+    found = {}
+    for unit in _CALENDAR_UNITS:
+        command = ["systemctl", "show", unit, "-p", "TimersCalendar", "-p", "RandomizedDelayUSec"]
+        if runner is run:
+            found[unit] = runner(command, timeout=8) or ""
+        else:
+            found[unit] = runner(command) or ""
+    return found
 
 
 def _guest_services(guest_id, runner):

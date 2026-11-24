@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Badge, Confirm, Empty, Page } from "../components/Chrome";
 import { postJson } from "../lib";
-import type { ViewState } from "../types";
+import type { CalendarRule, ViewState } from "../types";
 
 export function Jobs({
   state,
@@ -16,28 +16,147 @@ export function Jobs({
   const update = path === "/jobs/update" || path === "/jobs";
   return (
     <Page title="Jobs" context="Scheduled work, and the meaning of the last result.">
-      {path === "/jobs" ? <Week state={state} /> : null}
+      {path === "/jobs" ? <Month state={state} /> : null}
       {scan ? <ScanDossier state={state} /> : null}
       {update ? <UpdateDossier state={state} onState={onState} /> : null}
     </Page>
   );
 }
 
-function Week({ state }: { state: ViewState }) {
-  const items = state.week || [];
-  if (items.length === 0) {
-    return <Empty>No timers were read.</Empty>;
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function Month({ state }: { state: ViewState }) {
+  const rules = state.calendar?.rules || [];
+  const standing = state.calendar?.standing || [];
+  const [cursor, setCursor] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+  if (rules.length === 0) {
+    return (
+      <>
+        <Empty>No house jobs were read.</Empty>
+        {standing.map((line) => (
+          <p key={line} className="standing">
+            {line}
+          </p>
+        ))}
+      </>
+    );
   }
+  const cells = monthCells(cursor.year, cursor.month, rules);
+  const legend = dailyLegend(rules);
   return (
-    <ol className="sequence">
-      {items.map((item) => (
-        <li key={item.unit}>
-          <span>{item.label}</span>
-          <span className="num">{item.next}</span>
-        </li>
+    <div className="calendar">
+      <div className="calendar-nav">
+        <button type="button" className="quiet-button" onClick={() => setCursor((current) => shiftMonth(current, -1))}>
+          Previous month
+        </button>
+        <p className="calendar-title">
+          {MONTHS[cursor.month]} {cursor.year}
+        </p>
+        <button type="button" className="quiet-button" onClick={() => setCursor((current) => shiftMonth(current, 1))}>
+          Next month
+        </button>
+      </div>
+      {legend ? <p className="calendar-legend">{legend}</p> : null}
+      <div className="calendar-grid" role="grid" aria-label={`${MONTHS[cursor.month]} ${cursor.year}`}>
+        {WEEKDAYS.map((name) => (
+          <div key={name} className="calendar-dow" role="columnheader">
+            {name}
+          </div>
+        ))}
+        {cells.map((cell) => (
+          <div
+            key={cell.key}
+            role="gridcell"
+            className={["day", cell.outside ? "outside" : "", cell.today ? "is-today" : ""].filter(Boolean).join(" ")}
+            aria-current={cell.today ? "date" : undefined}
+          >
+            <span className="num">{cell.day}</span>
+            {cell.jobs.map((job) => (
+              <span key={job} className="day-job">
+                {job}
+              </span>
+            ))}
+          </div>
+        ))}
+      </div>
+      {standing.map((line) => (
+        <p key={line} className="standing">
+          {line}
+        </p>
       ))}
-    </ol>
+    </div>
   );
+}
+
+function shiftMonth(current: { year: number; month: number }, delta: number) {
+  const next = new Date(current.year, current.month + delta, 1);
+  return { year: next.getFullYear(), month: next.getMonth() };
+}
+
+function monthCells(year: number, month: number, rules: CalendarRule[]) {
+  const first = new Date(year, month, 1);
+  const lead = (first.getDay() + 6) % 7;
+  const start = new Date(year, month, 1 - lead);
+  const last = new Date(year, month + 1, 0);
+  const trail = 6 - ((last.getDay() + 6) % 7);
+  const total = lead + last.getDate() + trail;
+  const today = new Date();
+  const cells: { key: string; day: number; outside: boolean; today: boolean; jobs: string[] }[] = [];
+  for (let index = 0; index < total; index += 1) {
+    const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + index);
+    cells.push({
+      key: dateKey(date),
+      day: date.getDate(),
+      outside: date.getMonth() !== month,
+      today: date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate(),
+      jobs: jobsOn(date, rules),
+    });
+  }
+  return cells;
+}
+
+function dailyLegend(rules: CalendarRule[]) {
+  const daily = rules.filter((rule) => !rule.weekdays);
+  if (daily.length === 0) {
+    return "";
+  }
+  return `Every day · ${daily.map((rule) => `${rule.label} ${when(rule)}`).join(" · ")}`;
+}
+
+function jobsOn(date: Date, rules: CalendarRule[]) {
+  const weekday = (date.getDay() + 6) % 7;
+  return rules
+    .filter((rule) => Array.isArray(rule.weekdays) && rule.weekdays.includes(weekday))
+    .map((rule) => ({ time: rule.time, label: rule.label, until: rule.until }))
+    .sort((left, right) => left.time.localeCompare(right.time) || left.label.localeCompare(right.label))
+    .map((rule) => `${rule.label} ${when(rule)}`);
+}
+
+function when(rule: { time: string; until?: string }) {
+  return rule.until ? `${rule.time}–${rule.until}` : rule.time;
+}
+
+function dateKey(date: Date) {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
 }
 
 function guestName(state: ViewState, id: string) {

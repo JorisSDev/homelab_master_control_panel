@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from homelab_panel.identity import parse_identity, version_tuple
 from homelab_panel.parse_logs import parse_runs
-from homelab_panel.signals import blast_lines, signature_age_days, vzdump_has_job
+from homelab_panel.signals import blast_lines, house_calendar, signature_age_days, vzdump_has_job
 
 TIMER_LABELS = {
     "homelab-scan.timer": "Daily scan",
@@ -26,6 +26,7 @@ def extend_state(state, config, snapshot, now):
     state["figures"] = _figures(state, snapshot, config)
     state["week"] = _week(state, snapshot, now)
     state["upcoming"] = [item for item in state["week"] if item["soon"]][:6]
+    state["calendar"] = house_calendar(snapshot.get("calendars") or {}, snapshot.get("timers") or [])
     state["reach"] = _reach(config, snapshot, state)
     state["das"] = _das(config, snapshot, state)
     state["protection"] = _protection(config, snapshot, state)
@@ -163,20 +164,21 @@ def _reach(config, snapshot, state):
         pin_summary = f"{len(drifted)} pins drifted"
     else:
         pin_summary = f"{len(matched)} pins match"
-    down = [row["name"] for row in kuma.get("rows") or [] if row.get("status") == "down"]
+    rows = kuma.get("rows") or []
+    up = [row["name"] for row in rows if row.get("status") == "up"]
+    down = [row["name"] for row in rows if row.get("status") == "down"]
     if kuma.get("error"):
         summary = kuma["error"]
-    elif down:
-        summary = f"{len(down)} down"
-    elif kuma.get("rows"):
-        summary = f"{len(kuma['rows'])} up"
-    else:
+    elif not rows:
         summary = "No monitors"
+    else:
+        summary = f"{len(up)} up, {len(down)} down"
     wan = config.get("wan") or {}
     tunnel = snapshot.get("tunnel") or {}
     return {
         "paths": paths,
-        "monitors": {"ok": bool(kuma.get("ok")), "error": kuma.get("error") or "", "summary": summary, "rows": kuma.get("rows") or []},
+        "monitors": {"ok": bool(kuma.get("ok")), "error": kuma.get("error") or "", "summary": summary, "rows": rows},
+        "kuma_url": _kuma_url(config),
         "pins": {"checked": bool(pins.get("checked")), "summary": pin_summary, "rows": pins.get("rows") or []},
         "multicast_snooping": snapshot.get("multicast_snooping"),
         "tunnel": {
@@ -190,6 +192,13 @@ def _reach(config, snapshot, state):
             "listening": snapshot.get("wan_listening"),
         },
     }
+
+
+def _kuma_url(config):
+    text = str(((config.get("kuma") or {}).get("url")) or "").strip()
+    if text.startswith("https://") or text.startswith("http://"):
+        return text
+    return ""
 
 
 def _das(config, snapshot, state):

@@ -308,6 +308,47 @@ describe("master panel", () => {
     expect(page("/jobs/update", waiting)).toContain("Nothing is waiting.");
   });
 
+  it("opens jobs on a month calendar and leaves housekeeping off it", () => {
+    const html = page("/jobs", {
+      ...fixture,
+      week: [
+        { unit: "logrotate.timer", label: "Log rotate", next: "Wed 03 Jan 00:00", soon: true },
+        { unit: "systemd-tmpfiles-clean.timer", label: "systemd tmpfiles", next: "Wed 03 Jan 00:00", soon: true },
+      ],
+      calendar: {
+        rules: [
+          { label: "Scan", time: "04:00", weekdays: null },
+          { label: "Update", time: "06:00", weekdays: [6] },
+          { label: "Proxmox", time: "01:00", weekdays: null, until: "06:00" },
+        ],
+        standing: ["Disk check runs every two minutes."],
+      },
+    });
+    expect(html).toContain("calendar-grid");
+    expect(html.indexOf(">Mon<")).toBeLessThan(html.indexOf(">Sun<"));
+    expect(html).toContain("Previous month");
+    expect(html).toContain("Next month");
+    expect(html).toContain("is-today");
+    expect(html).toContain("Every day · Scan 04:00 · Proxmox 01:00–06:00");
+    const cells = html.slice(html.indexOf("calendar-grid"));
+    expect(cells).toContain("Update 06:00");
+    expect(cells).not.toContain("Scan 04:00");
+    expect(cells).not.toContain("Proxmox");
+    expect(html).toContain("Disk check runs every two minutes.");
+    expect(html).not.toContain("Log rotate");
+    expect(html).not.toContain("systemd tmpfiles");
+    expect(html).not.toContain("Start the update");
+    expect(html).not.toContain("restarts playback");
+    const empty = page("/jobs", {
+      ...fixture,
+      week: [{ unit: "logrotate.timer", label: "Log rotate", next: "Wed 03 Jan 00:00", soon: false }],
+      calendar: { rules: [], standing: [] },
+    });
+    expect(empty).toContain("No house jobs were read.");
+    expect(empty).not.toContain("Log rotate");
+    expect(empty).not.toContain("calendar-grid");
+  });
+
   it("puts monitors on Reach, meters on Storage, and install behind a published release", () => {
     const rich: ViewState = {
       ...fixture,
@@ -324,10 +365,51 @@ describe("master panel", () => {
     const reach = page("/reach", rich);
     expect(reach).toContain("Media");
     expect(reach).toContain("media.example");
+    expect(reach).toContain("1 up, 0 down");
+    expect(reach).toContain("24h");
+    expect(reach).toContain("7d");
+    expect(reach).toContain("Last down");
+    expect(reach).toContain("Last down is within 30 days.");
+    expect(reach).toContain("—");
     expect(reach).toContain("1 pins match");
     expect(reach).toContain("Multicast snooping");
     expect(reach).toContain("is off");
+    expect(reach).toContain("listening");
+    expect(reach).not.toContain("Open Kuma");
     expect(reach).not.toContain("api/push");
+    const linked = page("/reach", {
+      ...rich,
+      reach: {
+        ...rich.reach!,
+        kuma_url: "http://10.0.0.41:3001",
+        monitors: {
+          ok: true,
+          error: "",
+          summary: "1 up, 1 down",
+          rows: [
+            { name: "Media", type: "http", status: "up", at: "2026-11-24 12:00:00", uptime_24h: 99.5, uptime_7d: 98, last_down: "" },
+            { name: "Photos", type: "ping", status: "down", at: "", uptime_24h: null, uptime_7d: 90.5, last_down: "2026-11-24 20:53:53.225" },
+          ],
+        },
+      },
+    });
+    expect(linked).toContain("1 up, 1 down");
+    expect(linked).toContain("99.5%");
+    expect(linked).toContain("98.0%");
+    expect(linked).toContain("90.5%");
+    expect(linked).toContain("24 Nov 20:53");
+    expect(linked).toContain("Last down is within 30 days.");
+    expect(linked).toContain("Open Kuma");
+    expect(linked).toContain('href="http://10.0.0.41:3001"');
+    expect(linked).toContain('target="_blank"');
+    expect(linked).toContain('rel="noopener noreferrer"');
+    expect(linked).toContain("media.example");
+    const unsafe = page("/reach", {
+      ...rich,
+      reach: { ...rich.reach!, kuma_url: "javascript:alert(1)" },
+    });
+    expect(unsafe).not.toContain("javascript:");
+    expect(unsafe).not.toContain("Open Kuma");
     const storage = page("/storage");
     expect(storage).toContain("Run disk check");
     expect(storage).toContain("There is no backup job.");

@@ -24,10 +24,16 @@ export function Reach({ state, onState }: { state: ViewState; onState: (next: Vi
     }
   }
 
+  const rows = reach?.monitors.rows ?? [];
+  const up = rows.filter((row) => row.status === "up").length;
+  const down = rows.filter((row) => row.status === "down").length;
+  const headline = rows.length > 0 ? `${up} up, ${down} down` : reach?.monitors.summary || "How each service is reached.";
+  const kumaHref = safeHref(reach?.kuma_url);
+
   return (
     <Page
       title="Reach"
-      context={reach?.monitors.summary || "How each service is reached."}
+      context={headline}
       action={
         <div className="row-actions">
           <button type="button" className="quiet-button" disabled={busy} onClick={() => void run("/api/reach/paths", "Checked paths")}>
@@ -94,27 +100,41 @@ export function Reach({ state, onState }: { state: ViewState; onState: (next: Vi
             {reach.multicast_snooping === null ? "was not read" : reach.multicast_snooping ? "is on" : "is off"}
           </p>
           {reach.monitors.error ? <p className="quiet">{reach.monitors.error}</p> : null}
-          {reach.monitors.rows.length > 0 ? (
-            <table>
+          {kumaHref ? (
+            <p>
+              <a className="text-link" href={kumaHref} target="_blank" rel="noopener noreferrer">
+                Open Kuma
+              </a>
+            </p>
+          ) : null}
+          {rows.length > 0 ? (
+            <>
+              <p className="quiet">Last down is within 30 days.</p>
+              <table>
               <thead>
                 <tr>
                   <th>Monitor</th>
-                  <th>Type</th>
                   <th>Status</th>
+                  <th>24h</th>
+                  <th>7d</th>
+                  <th>Last down</th>
                 </tr>
               </thead>
               <tbody>
-                {reach.monitors.rows.map((row) => (
+                {rows.map((row) => (
                   <tr key={row.name}>
                     <td>{row.name}</td>
-                    <td>{row.type}</td>
                     <td>
                       <Badge value={row.status} />
                     </td>
+                    <td className="num">{percent(row.uptime_24h)}</td>
+                    <td className="num">{percent(row.uptime_7d)}</td>
+                    <td className="num">{lastDown(row.last_down)}</td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </>
           ) : null}
         </div>
       ) : null}
@@ -127,4 +147,33 @@ function mark(value: boolean | null) {
     return "";
   }
   return value ? "up" : "down";
+}
+
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function lastDown(value: string | undefined) {
+  const text = (value || "").trim();
+  if (!text) {
+    return "—";
+  }
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?$/);
+  const month = match ? SHORT_MONTHS[Number(match[2]) - 1] : "";
+  if (!match || !month) {
+    return text;
+  }
+  return `${Number(match[3])} ${month} ${match[4]}:${match[5]}`;
+}
+
+function percent(value: number | null | undefined) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "—";
+  }
+  return `${value.toFixed(1)}%`;
+}
+
+function safeHref(url: string | undefined) {
+  if (!url) {
+    return "";
+  }
+  return url.startsWith("https://") || url.startsWith("http://") ? url : "";
 }

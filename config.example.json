@@ -70,7 +70,8 @@
     }
   ],
   "kuma": {
-    "guest_id": ""
+    "guest_id": "",
+    "url": "http://10.0.0.41:3001"
   },
   "das": {
     "uuid": "",

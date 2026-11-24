@@ -10,7 +10,7 @@ Proxmox remains the place to start, stop, open a console, snapshot, and firewall
 - **Guests.** Every container and virtual machine, in boot order or by address. A guest opens a dossier with its resources, blast radius, and links out.
 - **Reach.** LAN name, public name, and the latest Uptime Kuma result on one row. Pinned rows cover the tunnel, the WAN port, DNS pins, and multicast snooping.
 - **Storage.** Free space, the disk-shelf dossier, and the protection matrix.
-- **Jobs.** The week clock, the security scan, and the Sunday update preview.
+- **Jobs.** The month calendar, the security scan, and the Sunday update preview.
 - **System.** The installed version, Install, the operator log, a redacted report, and Sign out. It opens from the version in the sidebar.
 - **Recovery.** A live checklist at `/recovery`, offered after a short uptime. It is not in the sidebar.
 
@@ -39,7 +39,8 @@ Optional keys, all safe to omit:
 
 - `roles` maps a guest id to a short role.
 - `paths` lists `{name, guest, lan, public}` for the Reach table.
-- `kuma.guest_id` is the container whose local Uptime Kuma database is read. The query asks for monitor name, type, and the latest status only.
+- `kuma.guest_id` is the container whose local Uptime Kuma database is read. The query asks for the monitor name, type, status, latest heartbeat, 24-hour and 7-day uptime, and last down time.
+- `kuma.url` is an optional http(s) address shown as Open Kuma. It is not used to read the database.
 - `das.uuid`, `das.mount`, and `das.monitor` describe the disk shelf.
 - `disk_unit` is the systemd unit for Run disk check.
 - `tunnel.guest_id` is the container that runs cloudflared.
