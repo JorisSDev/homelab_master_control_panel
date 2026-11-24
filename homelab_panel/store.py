@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -41,6 +43,59 @@ def save_checks(config, packages, guest_updates):
     payload = {"packages": packages, "guest_updates": guest_updates}
     try:
         (directory / "checks.json").write_text(json.dumps(payload))
+    except OSError:
+        return
+
+
+def load_sessions(config):
+    directory = state_dir(config)
+    if directory is None:
+        return []
+    try:
+        payload = json.loads((directory / "sessions.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    rows = payload.get("sessions") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    now = time.time()
+    kept = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        token = row.get("token")
+        expiry = row.get("expiry")
+        if isinstance(token, str) and token and isinstance(expiry, (int, float)) and not isinstance(expiry, bool) and expiry > now:
+            kept.append({"token": token, "expiry": float(expiry)})
+    return kept
+
+
+def save_sessions(config, sessions):
+    directory = state_dir(config)
+    if directory is None:
+        return
+    rows = []
+    for row in sessions or []:
+        if not isinstance(row, dict):
+            continue
+        token = row.get("token")
+        expiry = row.get("expiry")
+        if isinstance(token, str) and token and isinstance(expiry, (int, float)) and not isinstance(expiry, bool):
+            rows.append({"token": token, "expiry": float(expiry)})
+    file = directory / "sessions.json"
+    payload = json.dumps({"sessions": rows}).encode()
+    try:
+        fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    except OSError:
+        return
+    try:
+        os.write(fd, payload)
+    except OSError:
+        return
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(file, 0o600)
     except OSError:
         return
 

@@ -47,33 +47,6 @@ export function Reach({ state, onState }: { state: ViewState; onState: (next: Vi
     >
       {message ? <p className={message.startsWith("Checked") ? "ok" : "bad"}>{message}</p> : null}
       {!reach ? <Empty>Reach has not been read.</Empty> : null}
-      {reach && reach.paths.length === 0 ? <Empty>No service paths are configured.</Empty> : null}
-      {reach && reach.paths.length > 0 ? (
-        <table>
-          <thead>
-            <tr>
-              <th>Service</th>
-              <th>LAN</th>
-              <th>Public</th>
-              <th>Kuma</th>
-            </tr>
-          </thead>
-          <tbody>
-            {reach.paths.map((row) => (
-              <tr key={row.name}>
-                <td>{row.name}</td>
-                <td>
-                  {row.lan || "—"} {mark(row.lan_ok)}
-                </td>
-                <td>
-                  {row.public || "—"} {mark(row.public_ok)}
-                </td>
-                <td>{row.kuma ? <Badge value={row.kuma} /> : "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
       {reach ? (
         <div className="pinned">
           <p>
@@ -113,7 +86,8 @@ export function Reach({ state, onState }: { state: ViewState; onState: (next: Vi
               <table>
               <thead>
                 <tr>
-                  <th>Monitor</th>
+                  <th>Service</th>
+                  <th>LAN</th>
                   <th>Status</th>
                   <th>24h</th>
                   <th>7d</th>
@@ -124,6 +98,7 @@ export function Reach({ state, onState }: { state: ViewState; onState: (next: Vi
                 {rows.map((row) => (
                   <tr key={row.name}>
                     <td>{row.name}</td>
+                    <td>{lanOf(reach.paths, row.name)}</td>
                     <td>
                       <Badge value={row.status} />
                     </td>
@@ -142,11 +117,9 @@ export function Reach({ state, onState }: { state: ViewState; onState: (next: Vi
   );
 }
 
-function mark(value: boolean | null) {
-  if (value === null) {
-    return "";
-  }
-  return value ? "up" : "down";
+function lanOf(paths: { name: string; lan: string }[], name: string) {
+  const found = paths.find((row) => row.name === name);
+  return found?.lan || "—";
 }
 
 const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

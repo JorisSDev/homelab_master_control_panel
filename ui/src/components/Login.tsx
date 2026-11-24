@@ -8,9 +8,10 @@ export function Login({
 }: {
   error: string;
   busy: boolean;
-  onSubmit: (password: string) => void;
+  onSubmit: (password: string, remember: boolean) => void;
 }) {
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(false);
   return (
     <main className="gate">
       <Logo />
@@ -20,7 +21,7 @@ export function Login({
         onSubmit={(event) => {
           event.preventDefault();
           if (!busy && password) {
-            onSubmit(password);
+            onSubmit(password, remember);
           }
         }}
       >
@@ -33,6 +34,10 @@ export function Login({
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />
+        </label>
+        <label className="remember">
+          <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
+          Remember this device
         </label>
         <button type="submit" disabled={busy || password.length === 0}>
           Sign in

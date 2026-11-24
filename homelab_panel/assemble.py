@@ -214,17 +214,16 @@ def _das(config, snapshot, state):
             smart = row.get("status") or ""
     if expected and mounted:
         match = "Match" if expected == mounted else "Different disk"
+        headline = "The shelf is the expected disk." if match == "Match" else "The mounted disk is not the expected disk."
     elif expected:
         match = "Not mounted"
+        headline = "The expected disk is not mounted."
+    elif mounted:
+        match = "No expected disk"
+        headline = "The shelf is mounted."
     else:
         match = "No expected disk"
-    parts = [match]
-    if speeds:
-        parts.append(", ".join(speeds))
-    if faults:
-        parts.append(f"{faults} bus errors")
-    if smart:
-        parts.append(f"monitor {smart}")
+        headline = "The shelf was not identified."
     return {
         "expected_uuid": expected,
         "mounted_uuid": mounted,
@@ -233,7 +232,7 @@ def _das(config, snapshot, state):
         "recent": raw.get("recent") or [],
         "smart": smart,
         "fstab_waits": raw.get("fstab_waits"),
-        "summary": " · ".join(parts),
+        "summary": headline,
         "match": match,
     }
 

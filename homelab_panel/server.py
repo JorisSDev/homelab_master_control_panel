@@ -22,15 +22,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from homelab_panel.actions import start_action, start_unit
-from homelab_panel.auth import clear_cookie, new_session, session_token, set_cookie, verify_password
+from homelab_panel.auth import (
+    REMEMBER_SECONDS,
+    SESSION_SECONDS,
+    clear_cookie,
+    hash_password,
+    new_session,
+    session_token,
+    set_cookie,
+    verify_password,
+)
 from homelab_panel.collect import collect_snapshot
-from homelab_panel.config import ConfigError, load_config
-from homelab_panel.guests import check_guests, reboot_required, run_guest, running_container, update_guest
+from homelab_panel.config import ConfigError, load_config, save_password_hash
+from homelab_panel.guests import check_guests, reboot_required, run_guest, running_container, startup_commands, update_guest
 from homelab_panel.inventory import GUEST_ID, check_packages, wanted_ids
 from homelab_panel.self_update import UpdateError, describe, install_release
 from homelab_panel.signals import parse_resolv, pins_match, report_text
 from homelab_panel.state import build_state
-from homelab_panel.store import append_operator, load_checks, read_operator, save_checks
+from homelab_panel.store import append_operator, load_checks, load_sessions, read_operator, save_checks, save_sessions
 
 CACHE_SECONDS = 5
 ACTIVE_CACHE_SECONDS = 1
@@ -55,7 +64,7 @@ class Panel:
         self._packages = None
         self._guest_updates = None
         self._guest_active = ""
-        self._sessions = {}
+        self._sessions = {row["token"]: row["expiry"] for row in load_sessions(config)}
         self._failures = 0
         self._locked_until = 0.0
         self._pins = {"checked": False, "rows": []}
@@ -135,7 +144,7 @@ class Panel:
         if method == "POST" and clean == "/api/login":
             return self._login(body)
         if method == "POST" and clean == "/api/logout":
-            return self._logout()
+            return self._logout(headers)
         if clean.startswith("/api/"):
             if not self._authorized(headers):
                 return self._json(401, {"error": "Sign in is required."})
@@ -153,6 +162,10 @@ class Panel:
                 return self._check_packages()
             if method == "POST" and clean == "/api/guests/check":
                 return self._check_guests()
+            if method == "POST" and clean == "/api/guests/order":
+                return self._order_guests(body)
+            if method == "POST" and clean == "/api/password":
+                return self._change_password(body, headers)
             guest_update = re.fullmatch(r"/api/guests/([^/]+)/update", clean)
             if method == "POST" and guest_update:
                 return self._update_guest(guest_update.group(1), body)
@@ -405,17 +418,22 @@ class Panel:
         token = session_token(headers.get("Cookie", ""))
         if not token:
             return False
-        now = time.monotonic()
+        now = time.time()
         with self._lock:
             expiry = self._sessions.get(token)
             if not expiry or expiry < now:
                 self._sessions.pop(token, None)
-                return False
-            return True
+                stale = True
+            else:
+                stale = False
+        if stale:
+            self._persist_sessions()
+            return False
+        return True
 
     def _login(self, body):
-        now = time.monotonic()
-        if now < self._locked_until:
+        mono = time.monotonic()
+        if mono < self._locked_until:
             return self._json(429, {"error": "Too many attempts. Wait a minute."})
         payload = _payload(body)
         password = ""
@@ -424,20 +442,77 @@ class Panel:
         if not verify_password(password, self.config.get("password_hash") or ""):
             self._failures += 1
             if self._failures >= 5:
-                self._locked_until = now + 60
+                self._locked_until = mono + 60
                 self._failures = 0
             return self._json(401, {"error": "The password does not match."})
         self._failures = 0
+        remember = isinstance(payload, dict) and payload.get("remember") is True
+        window = REMEMBER_SECONDS if remember else SESSION_SECONDS
         token = new_session()
         with self._lock:
-            self._sessions[token] = now + 12 * 60 * 60
+            self._sessions[token] = time.time() + window
+        self._persist_sessions()
         return 204, {
             "Cache-Control": "no-store",
-            "Set-Cookie": set_cookie(token),
+            "Set-Cookie": set_cookie(token, window),
         }, b""
 
-    def _logout(self):
+    def _logout(self, headers):
+        token = session_token((headers or {}).get("Cookie", ""))
+        if token:
+            with self._lock:
+                self._sessions.pop(token, None)
+            self._persist_sessions()
         return 204, {"Cache-Control": "no-store", "Set-Cookie": clear_cookie()}, b""
+
+    def _persist_sessions(self):
+        with self._lock:
+            rows = [{"token": token, "expiry": expiry} for token, expiry in self._sessions.items()]
+        save_sessions(self.config, rows)
+
+    def _order_guests(self, body):
+        if self.guest_runner is None:
+            return self._json(400, {"error": "This copy cannot set boot order."})
+        if len(body) > BODY_LIMIT:
+            return self._json(400, {"error": "The request is too large."})
+        payload = _payload(body)
+        if not isinstance(payload, dict) or payload.get("confirm") is not True:
+            return self._json(400, {"error": "The order was not confirmed."})
+        error, commands = startup_commands(self.provider() or {}, payload.get("ids"))
+        if error:
+            return self._json(400, {"error": error})
+        for command in commands:
+            if _guest_call(self.guest_runner, command) is None:
+                return self._json(400, {"error": "The order was not saved."})
+        with self._lock:
+            self._state = None
+            self._at = 0.0
+        self._log("Saved the boot order")
+        return self._json(200, {"ok": True})
+
+    def _change_password(self, body, headers):
+        if len(body) > BODY_LIMIT:
+            return self._json(400, {"error": "The request is too large."})
+        payload = _payload(body)
+        if not isinstance(payload, dict):
+            return self._json(400, {"error": "The request could not be read."})
+        current = payload.get("current")
+        new = payload.get("new")
+        confirm = payload.get("confirm")
+        if not isinstance(current, str) or not verify_password(current, self.config.get("password_hash") or ""):
+            return self._json(401, {"error": "The password does not match."})
+        if not isinstance(new, str) or not new.strip() or new != confirm:
+            return self._json(400, {"error": "The new password was not accepted."})
+        updated = hash_password(new)
+        if not save_password_hash(self.config, updated):
+            return self._json(400, {"error": "The password was not saved."})
+        token = session_token((headers or {}).get("Cookie", ""))
+        with self._lock:
+            expiry = self._sessions.get(token)
+            self._sessions = {token: expiry} if token and expiry else {}
+        self._persist_sessions()
+        self._log("Changed the panel password")
+        return self._json(200, {"ok": True})
 
 
 class DirectoryAssets:
@@ -535,6 +610,18 @@ def make_handler(panel):
             return
 
     return Handler
+
+
+def _guest_call(runner, command):
+    try:
+        return runner(list(command), 20)
+    except TypeError:
+        try:
+            return runner(list(command))
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 
 def _guest(snapshot, guest_id):

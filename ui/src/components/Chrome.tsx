@@ -37,15 +37,35 @@ export function Badge({ value }: { value: string }) {
   return <span className={`badge tone-${kind}`}>{value}</span>;
 }
 
-export function Meter({ label, free, total, low }: { label: string; free: string; total: string; low?: boolean }) {
+export function Meter({
+  label,
+  free,
+  total,
+  low,
+  caption,
+  percent,
+}: {
+  label: string;
+  free: string;
+  total: string;
+  low?: boolean;
+  caption?: string;
+  percent?: number;
+}) {
   const freeN = parseFloat(free) || 0;
   const totalN = parseFloat(total) || 0;
-  const used = totalN > 0 ? Math.max(0, Math.min(100, ((totalN - freeN) / totalN) * 100)) : 0;
+  const used =
+    typeof percent === "number"
+      ? Math.max(0, Math.min(100, percent))
+      : totalN > 0
+        ? Math.max(0, Math.min(100, ((totalN - freeN) / totalN) * 100))
+        : 0;
+  const text = caption ?? (free && total ? `${free} free of ${total}` : "Unknown");
   return (
     <div className="meter">
       <div className="meter-label">
         <span>{label}</span>
-        <span className="num">{free && total ? `${free} free of ${total}` : "Unknown"}</span>
+        <span className="num">{text}</span>
       </div>
       <div className="meter-track" aria-hidden="true">
         <span className={low ? "meter-fill low" : "meter-fill"} style={{ width: `${used}%` }} />

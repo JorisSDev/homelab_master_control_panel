@@ -52,6 +52,31 @@ def load_config(path):
     return data
 
 
+def save_password_hash(config, password_hash):
+    path = Path(str((config or {}).get("config_path") or ""))
+    if not path.is_file():
+        return False
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    data["password_hash"] = password_hash
+    text = json.dumps(data, indent=2) + "\n"
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        mode = path.stat().st_mode & 0o777
+        temporary.write_text(text)
+        if mode:
+            os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    except OSError:
+        return False
+    config["password_hash"] = password_hash
+    return True
+
+
 def parse_bind(value):
     if not isinstance(value, str) or ":" not in value:
         raise ConfigError("bind must be host:port")

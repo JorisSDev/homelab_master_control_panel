@@ -6,9 +6,9 @@ Proxmox remains the place to start, stop, open a console, snapshot, and firewall
 
 ## Pages
 
-- **Overview.** What needs a person, what changed since the last visit, four host figures, the next two days, a job that is running, and a short chronology.
-- **Guests.** Every container and virtual machine, in boot order or by address. A guest opens a dossier with its resources, blast radius, and links out.
-- **Reach.** LAN name, public name, and the latest Uptime Kuma result on one row. Pinned rows cover the tunnel, the WAN port, DNS pins, and multicast snooping.
+- **Overview.** What needs a person, what changed since the last visit, four host figures, and the next house jobs.
+- **Machines.** Every container and virtual machine, in boot order or by address. A machine opens a dossier with its resources, blast radius, and links out.
+- **Reach.** Each Kuma monitor on one row, with its LAN name when a path uses the same name. Pinned rows cover the tunnel, the WAN port, DNS pins, and multicast snooping.
 - **Storage.** Free space, the disk-shelf dossier, and the protection matrix.
 - **Jobs.** The month calendar, the security scan, and the Sunday update preview.
 - **System.** The installed version, Install, the operator log, a redacted report, and Sign out. It opens from the version in the sidebar.
@@ -26,8 +26,10 @@ Paths are `/`, `/guests`, `/guests/<id>`, `/reach`, `/storage`, `/jobs`, `/jobs/
 - Run the disk check when `disk_unit` is set.
 - Check DNS pins and service paths.
 - Install a newer panel release.
+- Save boot order after confirmation. It writes the startup order used the next time the host starts, and nothing restarts now.
+- Change the panel password. The current password is checked, and other sessions end.
 
-The panel does not start or stop a guest, open a shell, or edit the firewall.
+The panel does not start or stop a machine, open a shell, or edit the firewall.
 
 ## What the page reads
 
@@ -49,7 +51,7 @@ Optional keys, all safe to omit:
 - `update_script` is the absolute path of the Sunday script, used for a dry run.
 - `scan_coverage` is a list of sentences shown beside a scan result.
 - `single_copy` is a list of `{id, note}` for data that has no second copy.
-- `state_dir` stores the last package check and the operator log. A relative path is next to the config file.
+- `state_dir` stores the last package check, the operator log, and session tokens. A relative path is next to the config file. The password is not stored there.
 
 ## Event lines
 
@@ -100,3 +102,10 @@ python3 /opt/homelab-panel/current/homelab-panel.pyz --update
 ```
 
 The service runs `/usr/bin/python3` on the zipapp with `--config` pointing at the host config. The host config names `scan_unit`, `update_unit`, and `password_hash`. Set `PASSWORD` in the environment to replace the example hash at startup. The page is HTTP on one LAN address, so the sign-in protects the actions from the rest of the network rather than from someone who can already read that address.
+
+## Later
+
+- A security review of this panel before it is ever reachable from outside the LAN.
+- Public names, once the tunnel hostnames are known.
+- Backups that are actually scheduled, so Storage can show them.
+- The panel is the front door: status, chores, and links out. Proxmox keeps console, snapshots, and firewall. Each app keeps its own work.

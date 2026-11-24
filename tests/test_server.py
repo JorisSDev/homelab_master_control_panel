@@ -8,8 +8,9 @@ from http.client import HTTPConnection
 from pathlib import Path
 from unittest import mock
 
+from homelab_panel.auth import verify_password
 from homelab_panel.config import ConfigError, load_config, parse_bind
-from homelab_panel.guests import _check_one
+from homelab_panel.guests import _check_one, startup_commands
 from homelab_panel.server import Panel, make_handler
 
 PASSWORD_HASH = (
@@ -634,3 +635,163 @@ class GuestCheckTests(unittest.TestCase):
         self.assertEqual(row["packages"], 1)
         self.assertEqual(row["compose"], [])
         self.assertEqual(row["error"], "")
+
+
+class BootOrderTests(unittest.TestCase):
+    def test_startup_commands_set_order_without_a_shell(self):
+        snapshot = {
+            "guests": [
+                {"id": "201", "kind": "container", "status": "running", "up": 30},
+                {"id": "216", "kind": "vm", "status": "stopped", "up": 10},
+            ]
+        }
+        error, commands = startup_commands(snapshot, ["216", "201"])
+        self.assertEqual(error, "")
+        self.assertEqual(commands[0], ["qm", "set", "216", "--startup", "order=1"])
+        self.assertEqual(commands[1], ["pct", "set", "201", "--startup", "order=2,up=30"])
+        for command in commands:
+            self.assertTrue(command[0] in {"pct", "qm"})
+            self.assertIn("set", command)
+            self.assertIn("--startup", command)
+            self.assertNotIn("-c", command)
+            self.assertNotIn("bash", command)
+            for part in command:
+                self.assertNotRegex(part, r"[;&|$`<>]")
+        rejected, none = startup_commands(snapshot, ["999"])
+        self.assertTrue(rejected)
+        self.assertEqual(none, [])
+        partial, skipped = startup_commands(snapshot, ["201"])
+        self.assertTrue(partial)
+        self.assertEqual(skipped, [])
+
+    def test_order_endpoint_writes_startup_and_rejects_unknown_ids(self):
+        calls = []
+
+        def runner(command, timeout=20):
+            calls.append(list(command))
+            return ""
+
+        snapshot = {
+            "guests": [
+                {"id": "201", "kind": "container", "status": "running", "up": 30},
+                {"id": "216", "kind": "vm", "status": "stopped"},
+            ]
+        }
+        panel = Panel(
+            {"cache_seconds": 5, "featured_timers": [], "password_hash": PASSWORD_HASH},
+            lambda: snapshot,
+            {},
+            guest_runner=runner,
+        )
+        status, headers, _ = panel.handle("POST", "/api/login", b'{"password":"example"}')
+        cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+        status, _, body = panel.handle(
+            "POST",
+            "/api/guests/order",
+            b'{"confirm":true,"ids":["216","201"]}',
+            cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"ok": True})
+        self.assertEqual(calls[0], ["qm", "set", "216", "--startup", "order=1"])
+        self.assertEqual(calls[1], ["pct", "set", "201", "--startup", "order=2,up=30"])
+        before = len(calls)
+        status, _, _ = panel.handle("POST", "/api/guests/order", b'{"confirm":true,"ids":["999"]}', cookie)
+        self.assertEqual(status, 400)
+        self.assertEqual(len(calls), before)
+        status, _, _ = panel.handle("POST", "/api/guests/order", b'{"ids":["216","201"]}', cookie)
+        self.assertEqual(status, 400)
+        self.assertEqual(len(calls), before)
+
+
+class SessionTests(unittest.TestCase):
+    def test_remember_lasts_thirty_days_and_survives_a_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "cache_seconds": 5,
+                "featured_timers": [],
+                "password_hash": PASSWORD_HASH,
+                "state_dir": tmp,
+            }
+            panel = Panel(config, lambda: {}, {})
+            status, headers, _ = panel.handle("POST", "/api/login", b'{"password":"example"}')
+            self.assertEqual(status, 204)
+            self.assertIn("Max-Age=43200", headers["Set-Cookie"])
+            self.assertIn("HttpOnly", headers["Set-Cookie"])
+            self.assertIn("SameSite=Strict", headers["Set-Cookie"])
+            self.assertIn("Path=/", headers["Set-Cookie"])
+            status, headers, _ = panel.handle("POST", "/api/login", b'{"password":"example","remember":true}')
+            self.assertEqual(status, 204)
+            cookie = headers["Set-Cookie"]
+            self.assertIn("Max-Age=2592000", cookie)
+            token = cookie.split(";", 1)[0].split("=", 1)[1]
+            raw = Path(tmp, "sessions.json").read_text()
+            self.assertNotIn("example", raw)
+            self.assertNotIn("password", raw)
+            self.assertIn(token, raw)
+            self.assertEqual(Path(tmp, "sessions.json").stat().st_mode & 0o777, 0o600)
+            restarted = Panel(config, lambda: {}, {})
+            status, _, _ = restarted.handle("GET", "/api/state", headers={"Cookie": f"panel_session={token}"})
+            self.assertEqual(status, 200)
+            restarted.handle("POST", "/api/logout", headers={"Cookie": f"panel_session={token}"})
+            self.assertNotIn(token, Path(tmp, "sessions.json").read_text())
+            status, _, _ = restarted.handle("GET", "/api/state", headers={"Cookie": f"panel_session={token}"})
+            self.assertEqual(status, 401)
+
+    def test_password_change_checks_the_current_password_and_hides_the_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "panel.json"
+            path.write_text(json.dumps({"password_hash": PASSWORD_HASH, "bind": "10.0.0.10:8090", "roles": {"201": "media"}}))
+            config = {
+                "password_hash": PASSWORD_HASH,
+                "config_path": str(path),
+                "state_dir": tmp,
+                "featured_timers": [],
+                "cache_seconds": 5,
+            }
+            panel = Panel(config, lambda: {}, {})
+            _, headers, _ = panel.handle("POST", "/api/login", b'{"password":"example","remember":true}')
+            cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+            _, headers, _ = panel.handle("POST", "/api/login", b'{"password":"example"}')
+            other = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+            status, _, body = panel.handle(
+                "POST",
+                "/api/password",
+                b'{"current":"wrong","new":"next-one","confirm":"next-one"}',
+                cookie,
+            )
+            self.assertEqual(status, 401)
+            self.assertNotIn(b"next-one", body)
+            status, _, _ = panel.handle(
+                "POST",
+                "/api/password",
+                b'{"current":"example","new":"next-one","confirm":"nope"}',
+                cookie,
+            )
+            self.assertEqual(status, 400)
+            status, _, _ = panel.handle(
+                "POST",
+                "/api/password",
+                b'{"current":"example","new":" ","confirm":" "}',
+                cookie,
+            )
+            self.assertEqual(status, 400)
+            status, _, body = panel.handle(
+                "POST",
+                "/api/password",
+                b'{"current":"example","new":"next-one","confirm":"next-one"}',
+                cookie,
+            )
+            self.assertEqual(status, 200)
+            self.assertNotIn(b"next-one", body)
+            self.assertNotIn(b"scrypt$", body)
+            saved = json.loads(path.read_text())
+            self.assertNotEqual(saved["password_hash"], PASSWORD_HASH)
+            self.assertEqual(saved["roles"]["201"], "media")
+            self.assertEqual(saved["bind"], "10.0.0.10:8090")
+            self.assertTrue(verify_password("next-one", saved["password_hash"]))
+            self.assertFalse(verify_password("example", saved["password_hash"]))
+            status, _, _ = panel.handle("GET", "/api/state", headers=other)
+            self.assertEqual(status, 401)
+            status, _, _ = panel.handle("GET", "/api/state", headers=cookie)
+            self.assertEqual(status, 200)

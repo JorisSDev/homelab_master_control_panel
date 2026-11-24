@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
-import { awayLines } from "./lib";
+import { awayLines, machineMark, reorderIds } from "./lib";
 import type { JobView, ViewState } from "./types";
 
 const job = (over: Partial<JobView> = {}): JobView => ({
@@ -134,20 +134,62 @@ function page(path: string, state: ViewState = fixture) {
 
 describe("master panel", () => {
   it("opens on an overview that only rolls up the other pages", () => {
-    const html = page("/");
+    const shown: ViewState = {
+      ...fixture,
+      calendar: {
+        rules: [
+          { label: "Scan", time: "04:00", weekdays: null },
+          { label: "Update", time: "06:00", weekdays: [6] },
+          { label: "Proxmox", time: "01:00", weekdays: null, until: "06:00" },
+        ],
+        standing: [],
+      },
+      week: [
+        { unit: "homelab-scan.timer", label: "Daily scan", next: "Tue 02 Jan 04:00", soon: true },
+        { unit: "homelab-update.timer", label: "Sunday update", next: "Sun 04 Jan 06:00", soon: true },
+        { unit: "pve-daily-update.timer", label: "Proxmox package refresh", next: "Wed 03 Jan 02:00", soon: true },
+        { unit: "logrotate.timer", label: "Log rotate", next: "Wed 03 Jan 00:00", soon: true },
+      ],
+      upcoming: [{ unit: "logrotate.timer", label: "Log rotate", next: "Wed 03 Jan 00:00", soon: true }],
+      chronology: [{ text: "qmcreate 116 OK", href: "/guests/116" }],
+      figures: {
+        load: "1.20",
+        memory_used: "8.0 GB",
+        memory_total: "15.3 GB",
+        memory_assigned: "20.5 GB",
+        root_free: "20.0 GB",
+        root_total: "32.0 GB",
+        das_free: "100.0 GB",
+        das_total: "200.0 GB",
+        das_label: "/mnt/shelf",
+      },
+    };
+    const html = page("/", shown);
     const nav = html.slice(html.indexOf("<nav>"), html.indexOf("</nav>"));
-    for (const label of ["Overview", "Guests", "Reach", "Storage", "Jobs"]) {
+    for (const label of ["Overview", "Machines", "Reach", "Storage", "Jobs"]) {
       expect(nav).toContain(`>${label}<`);
     }
+    expect(nav).not.toContain(">Guests<");
     expect(nav).not.toContain(">Home<");
     expect(nav).not.toContain(">Findings<");
     expect(nav).not.toContain(">Recovery<");
     expect(html).toContain('aria-label="Home"');
     expect(html).toContain("Master control panel");
     expect(html).toContain("host example finding");
-    expect(html).toContain("Next scan Tue 02 Jan 04:00");
-    expect(html).toContain("Next Sunday update Sun 04 Jan 06:00");
+    expect(html).toContain("Coming up");
+    expect(html).toContain("Scan");
+    expect(html).toContain("Tue 02 Jan 04:00");
+    expect(html).toContain("Sunday update");
+    expect(html).toContain("Sun 04 Jan 06:00");
+    expect(html).toContain("Proxmox package refresh");
+    expect(html).toContain("Last minute");
     expect(html).toContain("20.0 GB free");
+    expect(html).toContain("100.0 GB free");
+    expect(html).toContain("20.5 GB assigned on a 15.3 GB host");
+    expect(html).toContain("Overcommitted");
+    expect(html).not.toContain("Log rotate");
+    expect(html).not.toContain("qmcreate");
+    expect(html).not.toContain("assigned of");
     expect(html).toContain(">dev<");
     expect(html).not.toContain("VM 216");
     expect(html).not.toContain("nextcloud:apache");
@@ -159,6 +201,9 @@ describe("master panel", () => {
       findings: { ...fixture.findings, count: 0, items: [] },
     });
     expect(clear).toContain("The house is clear.");
+    const busy = page("/", { ...shown, scan: { ...shown.scan, idle: false, status: "Scan running" } });
+    expect(busy).toContain("Scan running");
+    expect(busy).toContain('href="/jobs/scan"');
   });
 
   it("shows the running scan in plain language and hides the start button", () => {
@@ -236,10 +281,18 @@ describe("master panel", () => {
     expect(html).not.toContain("apt-get install");
     const media = page("/guests/201");
     const house = page("/guests/216");
-    expect(media).toContain("Update this guest");
+    expect(html).toContain("Machines");
+    expect(html).toContain("Sort");
+    expect(html).toContain(">Boot<");
+    expect(html).toContain(">Address<");
+    expect(html).toContain("Save");
+    expect(html).not.toContain("the next time the host starts");
+    expect(html).not.toContain("Nothing restarts now");
+    expect(media).toContain("Update this machine");
     expect(media).toContain("Blast radius");
-    expect(media).not.toContain("Start the guest update");
-    expect(house).not.toContain("Update this guest");
+    expect(media).not.toContain("Start the machine update");
+    expect(media).not.toContain("Update this guest");
+    expect(house).not.toContain("Update this machine");
     const unsafe = page("/guests", {
       ...fixture,
       services: {
@@ -273,6 +326,13 @@ describe("master panel", () => {
     const ordered = page("/guests", mixed);
     expect(ordered.indexOf("CT 201")).toBeLessThan(ordered.indexOf("VM 216"));
     expect(ordered.indexOf("VM 216")).toBeLessThan(ordered.indexOf("CT 330"));
+    expect(reorderIds(["107", "201", "216"], "216", "107")).toEqual(["216", "107", "201"]);
+    expect(reorderIds(["107", "201", "216"], "107", "216")).toEqual(["201", "216", "107"]);
+    expect(reorderIds(["107", "201"], "107", "107")).toEqual(["107", "201"]);
+    expect(reorderIds(["107", "201"], "999", "107")).toEqual(["107", "201"]);
+    expect(machineMark("boot", 2, "")).toBe("2");
+    expect(machineMark("address", 2, "10.0.0.30")).toBe("10.0.0.30");
+    expect(machineMark("address", 2, "")).toBe("—");
   });
 
   it("shows package versions after a check and an empty result plainly", () => {
@@ -375,6 +435,7 @@ describe("master panel", () => {
     expect(reach).toContain("Multicast snooping");
     expect(reach).toContain("is off");
     expect(reach).toContain("listening");
+    expect(reach).not.toContain("Public");
     expect(reach).not.toContain("Open Kuma");
     expect(reach).not.toContain("api/push");
     const linked = page("/reach", {
@@ -412,8 +473,33 @@ describe("master panel", () => {
     expect(unsafe).not.toContain("Open Kuma");
     const storage = page("/storage");
     expect(storage).toContain("Run disk check");
-    expect(storage).toContain("There is no backup job.");
+    expect(storage).toContain("Nothing is backed up. There is no backup job, and no machine has a second copy.");
+    expect(storage).not.toContain("<th>Where</th>");
     expect(storage).toContain("20.0 GB free of 32.0 GB");
+    const copied = page("/storage", {
+      ...fixture,
+      protection: {
+        has_job: false,
+        rows: [{ name: "media", id: "201", backup: "No job", snapshot: "None", copy: "Photos live on the shelf." }],
+      },
+      das: {
+        expected_uuid: "abc",
+        mounted_uuid: "def",
+        speeds: ["6.0 Gb/s"],
+        faults: 2,
+        recent: [],
+        smart: "",
+        fstab_waits: true,
+        summary: "The shelf is mounted.",
+        match: "No expected disk",
+      },
+    });
+    expect(copied).toContain("Photos live on the shelf.");
+    expect(copied).toContain("<th>Where</th>");
+    expect(copied).toContain("The shelf is mounted.");
+    expect(copied).toContain("6.0 Gb/s");
+    expect(copied).toContain("2 bus errors.");
+    expect(copied).toContain("fstab waits for the disk.");
     const system = page("/system");
     expect(system).toContain("Install this version");
     expect(system).toContain("Sign out");

@@ -18,7 +18,7 @@ type Props = {
 
 const NAV = [
   ["/", "Overview"],
-  ["/guests", "Guests"],
+  ["/guests", "Machines"],
   ["/reach", "Reach"],
   ["/storage", "Storage"],
   ["/jobs", "Jobs"],
@@ -117,10 +117,10 @@ function Gate() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function onSubmit(password: string) {
+  async function onSubmit(password: string, remember: boolean) {
     setBusy(true);
     setError("");
-    const result = await postJson("/api/login", { password });
+    const result = await postJson("/api/login", remember ? { password, remember: true } : { password });
     setBusy(false);
     if (result.ok) {
       window.location.reload();
@@ -129,7 +129,7 @@ function Gate() {
     setError(String(result.data.error || "The password was not accepted."));
   }
 
-  return <Login error={error} busy={busy} onSubmit={(password) => void onSubmit(password)} />;
+  return <Login error={error} busy={busy} onSubmit={(password, remember) => void onSubmit(password, remember)} />;
 }
 
 function current(path: string, href: string) {
@@ -141,7 +141,7 @@ function current(path: string, href: string) {
 
 function route(path: string, state: ViewState, setState: (next: ViewState) => void, go: (next: string) => void) {
   if (path === "/guests" || path.startsWith("/guests/")) {
-    return <Guests state={state} path={path} go={go} />;
+    return <Guests state={state} path={path} go={go} onState={setState} />;
   }
   if (path === "/reach") {
     return <Reach state={state} onState={setState} />;

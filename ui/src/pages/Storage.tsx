@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Meter, Page } from "../components/Chrome";
 import { postJson } from "../lib";
-import type { ViewState } from "../types";
+import type { ProtectionState, ViewState } from "../types";
 
 export function Storage({ state }: { state: ViewState }) {
   const [message, setMessage] = useState("");
@@ -37,6 +37,7 @@ export function Storage({ state }: { state: ViewState }) {
         <h2>Disk shelf</h2>
         <p>{das?.summary || "The disk shelf has not been read."}</p>
         {das?.speeds?.length ? <p>{das.speeds.join(", ")}</p> : null}
+        {das?.faults ? <p>{das.faults} bus errors.</p> : null}
         {das?.fstab_waits === true ? <p>fstab waits for the disk.</p> : null}
         {das?.fstab_waits === false ? <p>fstab does not wait for the disk.</p> : null}
         {das?.smart ? <p>Monitor {das.smart}</p> : null}
@@ -51,27 +52,43 @@ export function Storage({ state }: { state: ViewState }) {
         ) : null}
       </article>
       <h2>Protection</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Where</th>
-            <th>Backup</th>
-            <th>Snapshot</th>
-            <th>Copy</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(protection?.rows || []).map((row) => (
-            <tr key={`${row.id}-${row.name}`}>
-              <td>{row.name}</td>
-              <td>{row.backup}</td>
-              <td>{row.snapshot}</td>
-              <td>{row.copy || "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {protection?.has_job ? null : <p>There is no backup job.</p>}
+      {hasProtection(protection) ? (
+        <>
+          <table>
+            <thead>
+              <tr>
+                <th>Where</th>
+                <th>Backup</th>
+                <th>Snapshot</th>
+                <th>Copy</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(protection?.rows || []).map((row) => (
+                <tr key={`${row.id}-${row.name}`}>
+                  <td>{row.name}</td>
+                  <td>{row.backup}</td>
+                  <td>{row.snapshot}</td>
+                  <td>{row.copy || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {protection?.has_job ? null : <p>There is no backup job.</p>}
+        </>
+      ) : (
+        <p>Nothing is backed up. There is no backup job, and no machine has a second copy.</p>
+      )}
     </Page>
   );
+}
+
+function hasProtection(protection: ProtectionState | undefined) {
+  if (!protection) {
+    return false;
+  }
+  if (protection.has_job) {
+    return true;
+  }
+  return protection.rows.some((row) => (row.backup && row.backup !== "No job") || Boolean(row.copy));
 }

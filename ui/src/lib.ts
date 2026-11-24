@@ -11,6 +11,25 @@ export function digestOf(state: ViewState): Digest {
   };
 }
 
+export function reorderIds(ids: string[], from: string, to: string): string[] {
+  const fromIndex = ids.indexOf(from);
+  const toIndex = ids.indexOf(to);
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+    return [...ids];
+  }
+  const next = [...ids];
+  next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, from);
+  return next;
+}
+
+export function machineMark(mode: "boot" | "address", order: number, address: string): string {
+  if (mode === "address") {
+    return address || "—";
+  }
+  return String(order);
+}
+
 export function awayLines(before: Digest, after: Digest): string[] {
   const lines: string[] = [];
   if (before.scan !== after.scan) {

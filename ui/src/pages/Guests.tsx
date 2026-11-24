@@ -1,51 +1,107 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Badge, Confirm, Empty, Page } from "../components/Chrome";
-import { postJson } from "../lib";
+import { machineMark, postJson, reorderIds } from "../lib";
 import type { ServiceRow, ViewState } from "../types";
 
 export function Guests({
   state,
   path,
   go,
+  onState,
 }: {
   state: ViewState;
   path: string;
   go: (path: string) => void;
+  onState: (next: ViewState) => void;
 }) {
   const guestId = path.startsWith("/guests/") ? decodeURIComponent(path.slice("/guests/".length)) : "";
   const [mode, setMode] = useState<"boot" | "address">("boot");
   const [query, setQuery] = useState("");
-  const rows = useMemo(() => arrange(state.services.rows, mode, query), [state.services.rows, mode, query]);
+  const serverOrder = useMemo(() => bootIds(state.services.rows), [state.services.rows]);
+  const serverKey = serverOrder.join(",");
+  const [order, setOrder] = useState(serverOrder);
+  const [baseline, setBaseline] = useState(serverKey);
+  const [confirmSave, setConfirmSave] = useState(false);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const dragId = useRef("");
+  if (baseline !== serverKey) {
+    setBaseline(serverKey);
+    setOrder(serverOrder);
+  }
+  const dirty = order.join(",") !== serverKey;
+  const rows = useMemo(() => arrange(state.services.rows, mode, query, order), [state.services.rows, mode, query, order]);
   const open = rows.find((row) => row.id === guestId) || state.services.rows.find((row) => row.id === guestId);
+  const canDrag = mode === "boot" && query.trim() === "";
+
+  async function save() {
+    setBusy(true);
+    setMessage("");
+    const result = await postJson("/api/guests/order", { confirm: true, ids: order });
+    setBusy(false);
+    setConfirmSave(false);
+    if (!result.ok) {
+      setMessage(String(result.data.error || "The order was not saved."));
+      return;
+    }
+    setMessage("Saved the boot order.");
+    const response = await fetch("/api/state", { cache: "no-store" });
+    if (response.ok) {
+      onState((await response.json()) as ViewState);
+    }
+  }
 
   return (
-    <Page
-      title="Guests"
-      context={state.figures?.memory_assigned ? `${state.figures.memory_assigned} assigned` : state.services.summary}
-      action={
-        <div className="row-actions">
-          <button type="button" className={mode === "boot" ? "" : "quiet-button"} onClick={() => setMode("boot")}>
-            Boot order
+    <Page title="Machines" context={state.figures?.memory_assigned ? `${state.figures.memory_assigned} assigned` : state.services.summary}>
+      <div className="toolbar">
+        <input
+          className="filter"
+          type="search"
+          aria-label="Filter"
+          placeholder="Filter"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <div className="sort" role="group" aria-label="Sort">
+          <span>Sort</span>
+          <button type="button" aria-pressed={mode === "boot"} onClick={() => setMode("boot")}>
+            Boot
           </button>
-          <button type="button" className={mode === "address" ? "" : "quiet-button"} onClick={() => setMode("address")}>
+          <button type="button" aria-pressed={mode === "address"} onClick={() => setMode("address")}>
             Address
           </button>
         </div>
-      }
-    >
-      <input
-        className="filter"
-        type="search"
-        aria-label="Filter"
-        placeholder="Filter"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-      />
+        {mode === "boot" ? (
+          <button type="button" disabled={!dirty || busy} onClick={() => setConfirmSave(true)}>
+            Save
+          </button>
+        ) : null}
+      </div>
+      {message ? <p className={message.startsWith("Saved") ? "ok" : "bad"}>{message}</p> : null}
       <div className={open ? "split" : ""}>
         <ol className="sequence">
-          {rows.length === 0 ? <Empty>No guests were reported.</Empty> : null}
+          {rows.length === 0 ? <Empty>No machines were reported.</Empty> : null}
           {rows.map((row) => (
-            <li key={row.id} className={row.id === guestId ? "selected" : ""}>
+            <li
+              key={row.id}
+              className={row.id === guestId ? "selected" : ""}
+              draggable={canDrag}
+              onDragStart={() => {
+                dragId.current = row.id;
+              }}
+              onDragOver={(event) => {
+                if (canDrag) {
+                  event.preventDefault();
+                }
+              }}
+              onDrop={() => {
+                const from = dragId.current;
+                dragId.current = "";
+                if (canDrag && from) {
+                  setOrder((current) => reorderIds(current, from, row.id));
+                }
+              }}
+            >
               <a
                 href={`/guests/${row.id}`}
                 onClick={(event) => {
@@ -53,7 +109,7 @@ export function Guests({
                   go(`/guests/${row.id}`);
                 }}
               >
-                <span className="num">{row.order ?? "–"}</span>
+                <span className="num">{machineMark(mode, Math.max(order.indexOf(row.id), 0) + 1, row.address || "")}</span>
                 <span>
                   <strong>{row.name}</strong>
                   <span className="note">
@@ -75,18 +131,33 @@ export function Guests({
         </ol>
         {open ? <Dossier row={open} state={state} /> : null}
       </div>
+      {confirmSave ? (
+        <Confirm title="Save boot order" confirmLabel="Save" busy={busy} onCancel={() => setConfirmSave(false)} onConfirm={() => void save()}>
+          <p>This changes the order used the next time the host starts. Nothing restarts now.</p>
+        </Confirm>
+      ) : null}
     </Page>
   );
 }
 
-function arrange(rows: ServiceRow[], mode: "boot" | "address", query: string) {
+function bootIds(rows: ServiceRow[]) {
+  return arrange(rows, "boot", "", []).map((row) => row.id);
+}
+
+function arrange(rows: ServiceRow[], mode: "boot" | "address", query: string, order: string[]) {
   const needle = query.trim().toLowerCase();
   const filtered = needle
-    ? rows.filter((row) => `${row.name} ${row.id} ${row.role || ""} ${row.services.join(" ")}`.toLowerCase().includes(needle))
+    ? rows.filter((row) => `${row.name} ${row.id} ${row.role || ""} ${row.services.join(" ")} ${row.address || ""}`.toLowerCase().includes(needle))
     : rows;
+  const rank = new Map(order.map((id, index) => [id, index]));
   return [...filtered].sort((left, right) => {
     if (mode === "address") {
-      return (left.address || "zzz").localeCompare(right.address || "zzz");
+      return (left.address || "zzz").localeCompare(right.address || "zzz", undefined, { numeric: true });
+    }
+    const leftRank = rank.get(left.id);
+    const rightRank = rank.get(right.id);
+    if (leftRank !== undefined || rightRank !== undefined) {
+      return (leftRank ?? 10000) - (rightRank ?? 10000);
     }
     const leftOrder = left.order ?? 10000;
     const rightOrder = right.order ?? 10000;
@@ -109,7 +180,7 @@ function Dossier({ row, state }: { row: ServiceRow; state: ViewState }) {
     const result = await postJson(`/api/guests/${row.id}/update`, { confirm: true });
     setBusy(false);
     setConfirm(false);
-    setMessage(result.ok ? "Starting the guest update." : String(result.data.error || "The guest update did not start."));
+    setMessage(result.ok ? "Starting the machine update." : String(result.data.error || "The machine update did not start."));
   }
 
   return (
@@ -126,7 +197,7 @@ function Dossier({ row, state }: { row: ServiceRow; state: ViewState }) {
           <Badge value={row.status} />
           {canUpdate ? (
             <button type="button" onClick={() => setConfirm(true)}>
-              Update this guest
+              Update this machine
             </button>
           ) : null}
         </div>
@@ -172,8 +243,8 @@ function Dossier({ row, state }: { row: ServiceRow; state: ViewState }) {
       {row.services.length > 0 ? <p>{row.services.join(", ")}</p> : null}
       {confirm ? (
         <Confirm
-          title="Start the guest update"
-          confirmLabel="Start the guest update"
+          title="Start the machine update"
+          confirmLabel="Start the machine update"
           busy={busy}
           onCancel={() => setConfirm(false)}
           onConfirm={() => void start()}

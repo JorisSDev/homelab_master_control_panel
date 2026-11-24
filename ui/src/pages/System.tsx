@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { Empty, Page } from "../components/Chrome";
 import { postJson } from "../lib";
 import type { ViewState } from "../types";
@@ -26,6 +26,11 @@ export function Recovery({ state }: { state: ViewState }) {
 export function SystemPage({ state }: { state: ViewState }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
 
   async function install() {
     setBusy(true);
@@ -33,6 +38,22 @@ export function SystemPage({ state }: { state: ViewState }) {
     const result = await postJson("/api/panel/update");
     setBusy(false);
     setMessage(result.ok ? "Installing the panel." : String(result.data.error || "The panel did not update."));
+  }
+
+  async function changePassword(event: FormEvent) {
+    event.preventDefault();
+    setPasswordBusy(true);
+    setPasswordMessage("");
+    const result = await postJson("/api/password", { current, new: next, confirm });
+    setPasswordBusy(false);
+    if (!result.ok) {
+      setPasswordMessage(String(result.data.error || "The password was not changed."));
+      return;
+    }
+    setCurrent("");
+    setNext("");
+    setConfirm("");
+    setPasswordMessage("The password was changed.");
   }
 
   async function signOut() {
@@ -64,6 +85,25 @@ export function SystemPage({ state }: { state: ViewState }) {
           Install this version
         </button>
       ) : null}
+      <h2>Password</h2>
+      <form className="password-form" onSubmit={(event) => void changePassword(event)}>
+        <label>
+          Current password
+          <input type="password" name="current" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
+        </label>
+        <label>
+          New password
+          <input type="password" name="new" autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} />
+        </label>
+        <label>
+          Confirm password
+          <input type="password" name="confirm" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} />
+        </label>
+        <button type="submit" disabled={passwordBusy || !current || !next || !confirm}>
+          Change password
+        </button>
+      </form>
+      {passwordMessage ? <p className={passwordMessage.startsWith("The password was changed") ? "ok" : "bad"}>{passwordMessage}</p> : null}
       <h2>Operator log</h2>
       {(state.operator || []).length === 0 ? <Empty>No panel actions have been recorded.</Empty> : null}
       <ul>

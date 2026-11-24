@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 import homelab_panel.collect as collect
+from homelab_panel.assemble import _das
 from homelab_panel.collect import read_guests
 from homelab_panel.identity import parse_identity
 from homelab_panel.state import _run_view, build_state
@@ -456,3 +457,24 @@ class StateTests(unittest.TestCase):
         )
         self.assertEqual(low["storage"]["status"], "Low on disk")
         self.assertIn("/mnt/fictional-full", low["storage"]["summary"])
+
+
+class ShelfHeadlineTests(unittest.TestCase):
+    def test_the_headline_names_the_shelf_without_a_uuid(self):
+        cases = [
+            ("abc", "abc", "The shelf is the expected disk."),
+            ("abc", "def", "The mounted disk is not the expected disk."),
+            ("abc", "", "The expected disk is not mounted."),
+            ("", "def", "The shelf is mounted."),
+            ("", "", "The shelf was not identified."),
+        ]
+        for expected, mounted, headline in cases:
+            das = _das({}, {"das": {"expected_uuid": expected, "mounted_uuid": mounted, "speeds": ["6.0 Gb/s"], "faults": 1}}, {})
+            self.assertEqual(das["summary"], headline)
+            if expected:
+                self.assertNotIn(expected, das["summary"])
+            if mounted:
+                self.assertNotIn(mounted, das["summary"])
+            self.assertNotIn("6.0", das["summary"])
+            self.assertEqual(das["speeds"], ["6.0 Gb/s"])
+            self.assertEqual(das["faults"], 1)

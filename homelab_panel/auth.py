@@ -9,6 +9,7 @@ import secrets
 
 SESSION_COOKIE = "panel_session"
 SESSION_SECONDS = 12 * 60 * 60
+REMEMBER_SECONDS = 30 * 24 * 60 * 60
 
 
 def hash_password(password):
@@ -50,8 +51,8 @@ def session_token(cookie_header):
     return ""
 
 
-def set_cookie(token):
-    return f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_SECONDS}"
+def set_cookie(token, max_age=SESSION_SECONDS):
+    return f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={int(max_age)}"
 
 
 def clear_cookie():

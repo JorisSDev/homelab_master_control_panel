@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import subprocess
 
-from homelab_panel.inventory import parse_simulation, wanted_ids
+from homelab_panel.inventory import GUEST_ID, parse_simulation, wanted_ids
 
 CHECK_TIMEOUT = 20
 UPDATE_TIMEOUT = 900
@@ -98,6 +98,44 @@ def update_guest(guest_id, directories, runner):
             if _invoke(runner, command, UPDATE_TIMEOUT) is None:
                 return "The update did not finish."
     return ""
+
+
+_SHELL = set(";|&$`<>\n\r")
+
+
+def startup_commands(snapshot, ids):
+    known = {}
+    for guest in (snapshot or {}).get("guests") or []:
+        if not isinstance(guest, dict):
+            continue
+        guest_id = str(guest.get("id") or "")
+        if GUEST_ID.fullmatch(guest_id):
+            known[guest_id] = guest
+    if not isinstance(ids, list) or not ids:
+        return "The order was not accepted.", []
+    clean = []
+    for item in ids:
+        if isinstance(item, bool) or not isinstance(item, (str, int)):
+            return "That machine is not on this host.", []
+        guest_id = str(item)
+        if not GUEST_ID.fullmatch(guest_id) or guest_id not in known or guest_id in clean:
+            return "That machine is not on this host.", []
+        clean.append(guest_id)
+    if set(clean) != set(known):
+        return "The order was not accepted.", []
+    commands = []
+    for index, guest_id in enumerate(clean, start=1):
+        guest = known[guest_id]
+        tool = "qm" if guest.get("kind") == "vm" else "pct"
+        startup = f"order={index}"
+        delay = guest.get("up")
+        if tool == "pct" and type(delay) is int and delay >= 0:
+            startup = f"order={index},up={delay}"
+        command = [tool, "set", guest_id, "--startup", startup]
+        if any(part in {"-c", "bash", "sh"} or any(char in part for char in _SHELL) for part in command):
+            return "The order was not accepted.", []
+        commands.append(command)
+    return "", commands
 
 
 def running_container(config, guest):
