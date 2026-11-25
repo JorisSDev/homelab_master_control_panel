@@ -125,6 +125,7 @@ export function Confirm({
   onConfirm,
   returnFocus,
   destructive = false,
+  confirmDisabled = false,
 }: {
   title: string;
   children: ReactNode;
@@ -134,6 +135,7 @@ export function Confirm({
   onConfirm: () => void;
   returnFocus?: HTMLElement | null;
   destructive?: boolean;
+  confirmDisabled?: boolean;
 }) {
   const active = useRef(returnFocus ?? (typeof document === "undefined" ? null : document.activeElement));
   const cancel = useRef<HTMLButtonElement>(null);
@@ -154,9 +156,9 @@ export function Confirm({
           <Button ref={cancel} type="button" variant="outline" disabled={busy} onClick={onCancel}>
             Cancel
           </Button>
-          <Button type="button" variant={destructive ? "destructive" : "default"} disabled={busy} onClick={onConfirm}>
+          {confirmDisabled ? null : <Button type="button" variant={destructive ? "destructive" : "default"} disabled={busy} onClick={onConfirm}>
             {busy ? "Working…" : confirmLabel}
-          </Button>
+          </Button>}
         </div>
       </DialogContent>
     </Dialog>

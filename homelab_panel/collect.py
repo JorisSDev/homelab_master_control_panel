@@ -74,8 +74,11 @@ def collect_snapshot(config, runner=run, reader=read_text, note=None):
     scan_active, scan_since, scan_started = _service(runner, scan_service)
     update_active, update_since, update_started = _service(runner, update_service)
     logs = config.get("logs") or {}
+    maintenance_units = runner(["systemctl", "show", "-p", "Id,ActiveState,UnitFileState",
+                                "homelab-update.timer", "homelab-security.timer"]) or ""
     snapshot = {
         "timers": timers,
+        "maintenance_units": maintenance_units,
         "calendars": read_calendars(runner),
         "scan_active": scan_active,
         "scan_since": scan_since,

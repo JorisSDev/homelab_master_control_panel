@@ -16,7 +16,7 @@ function packageLine({ total, security }: Counts) {
 
 export function machinePackageStatus(machine: ServiceRow, guests: GuestUpdates, result?: GuestUpdateRow) {
   const running = machine.kind !== "vm" && machine.status === "Running";
-  const counts = running && guests.checked && !guests.error && result && !result.error
+  const counts = running && guests.checked && !guests.error && result && !result.error && !result.recheck
     ? reportedCounts(result.packages, result.security)
     : null;
   let label = "Not checked";
@@ -25,6 +25,7 @@ export function machinePackageStatus(machine: ServiceRow, guests: GuestUpdates, 
   else if (!running) label = "Machine status unavailable";
   else if (counts) label = packageLine(counts);
   else if (guests.error || result?.error) label = "Check incomplete";
+  else if (result?.recheck) label = "Check again after update";
   else if (guests.checked && result) label = "Result unavailable";
   return { running, counts, label };
 }

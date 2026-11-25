@@ -72,7 +72,7 @@ export function App({ initial = null, live = true, initialPath = "/" }: Props) {
   useEffect(() => {
     const previous = previousPath.current;
     previousPath.current = path;
-    if (previous.split("/")[1] === path.split("/")[1] || path === "/jobs/scan" || path === "/jobs/update" || path === "/jobs/patches") return;
+    if (previous.split("/")[1] === path.split("/")[1] || path.startsWith("/jobs/")) return;
     const machineDetail = path.startsWith("/guests/");
     if (machineDetail && window.matchMedia?.("(max-width: 1100px)").matches) return;
     const frame = window.requestAnimationFrame(() => {
@@ -167,7 +167,7 @@ function route(path: string, state: ViewState, setState: (next: ViewState) => vo
     return <Storage state={state} />;
   }
   if (path === "/jobs" || path.startsWith("/jobs/")) {
-    return <Jobs state={state} path={path} onState={setState} />;
+    return <Jobs state={state} path={path} onState={setState} go={go} />;
   }
   if (path === "/recovery") {
     return <Recovery state={state} />;

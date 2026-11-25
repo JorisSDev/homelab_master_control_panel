@@ -94,6 +94,7 @@ export type Upgrade = {
 
 export type Packages = {
   checked: boolean;
+  checked_at?: string;
   total: number | null;
   security: number | null;
   pending: number | null;
@@ -110,13 +111,63 @@ export type GuestUpdateRow = {
   floating: boolean;
   error: string;
   reboot?: boolean;
+  recheck?: boolean;
 };
 
 export type GuestUpdates = {
   checked: boolean;
+  checked_at?: string;
   error: string;
   rows: GuestUpdateRow[];
   active: string;
+};
+
+export type RecoveryEvidence = {
+  reference: string;
+  backup_at: string;
+  restore_tested_at: string;
+  fresh: boolean;
+  same_disk: boolean;
+};
+
+export type MaintenanceResult = {
+  status: "running" | "success" | "failed" | "blocked";
+  at: string;
+  mode?: "manual" | "automatic";
+  message: string;
+  retained_image?: string;
+  reboot_required?: boolean;
+};
+
+export type MaintenanceTarget = {
+  id: string;
+  name: string;
+  blocker: string;
+  can_preview: boolean;
+  backup: RecoveryEvidence | null;
+  last_run: MaintenanceResult | null;
+};
+
+export type MaintenanceSummary = {
+  security: MaintenanceTarget & { automation: "not_configured" | "paused" | "scheduled" | "unknown"; automation_check?: MaintenanceResult };
+  apps: MaintenanceTarget[];
+  legacy_paused: boolean | null;
+  active: boolean;
+  history?: (MaintenanceResult & { target: string })[];
+};
+
+export type UpdateReview = {
+  id: string;
+  target: string;
+  checked_at: string;
+  expires_at: string;
+  available: boolean;
+  blocker: string;
+  backup: RecoveryEvidence | null;
+  packages?: { name: string; current: string; candidate: string; critical: boolean }[];
+  current?: string;
+  version?: string;
+  candidate?: string;
 };
 
 export type ViewState = {
@@ -160,6 +211,7 @@ export type ViewState = {
   };
   packages: Packages;
   guest_updates: GuestUpdates;
+  maintenance?: MaintenanceSummary;
   panel: {
     version: string;
     latest: string;

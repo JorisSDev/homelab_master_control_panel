@@ -1,6 +1,6 @@
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Badge, Confirm, Empty, Notice, Page } from "../components/Chrome";
+import { Badge, Confirm, Empty, Notice, Page, RouteLink } from "../components/Chrome";
 import { ContainerPatchDetails, patchStatusOf } from "../components/PatchStatus";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
@@ -12,31 +12,65 @@ import { Table, TableCell, TableHead } from "../components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import { postJson, readSnapshot, useMediaQuery } from "../lib";
 import type { CalendarRule, JobView, Run, ViewState } from "../types";
+import { MaintenanceHistory, MaintenanceUpdates } from "./MaintenanceUpdates";
 
 export function Jobs({
   state,
   path,
   onState,
+  go,
 }: {
   state: ViewState;
   path: string;
   onState: (next: ViewState) => void;
+  go: (path: string) => void;
 }) {
   const [updateBusy, setUpdateBusy] = useState<UpdateBusy>("");
+  const view = path === "/jobs/scan" ? "scan" : path === "/jobs/history" ? "history"
+    : path === "/jobs/update" || path === "/jobs/schedule" ? "schedule" : "updates";
   useEffect(() => {
-    const id = path === "/jobs/scan" ? "scan-job" : path === "/jobs/update" ? "update-job" : path === "/jobs/patches" ? "patch-checks" : "";
+    const id = path === "/jobs/scan" ? "scan-job" : path === "/jobs/update" ? "update-job"
+      : path === "/jobs/patches" ? "patch-checks" : path === "/jobs/history" ? "job-history"
+      : path === "/jobs/schedule" ? "job-schedule" : "";
     if (id) document.getElementById(id)?.focus();
   }, [path]);
 
+  const tabs = [
+    { key: "updates", label: "Updates", href: "/jobs" },
+    { key: "schedule", label: "Schedule", href: "/jobs/schedule" },
+    { key: "scan", label: "Scan", href: "/jobs/scan" },
+    { key: "history", label: "History", href: "/jobs/history" },
+  ];
+  const held = state.maintenance?.legacy_paused === true;
   return (
-    <Page title="Jobs" context="Maintenance schedule and run history.">
-      <Month state={state} onState={onState} />
-      <PackageChecks state={state} onState={onState} open={path === "/jobs/patches"}
-        busy={updateBusy} onBusy={setUpdateBusy} />
-      <div className="two-panels job-panels">
-        <ScanCard state={state} open={path === "/jobs/scan"} />
-        <UpdateCard state={state} busy={updateBusy} onBusy={setUpdateBusy} />
-      </div>
+    <Page title="Jobs">
+      <nav className="jobs-nav" aria-label="Job views">
+        {tabs.map(tab => <RouteLink key={tab.key} href={tab.href} go={go}
+          aria-current={view === tab.key ? "page" : undefined}>{tab.label}</RouteLink>)}
+      </nav>
+      {view === "updates" ? (
+        <>
+          <MaintenanceUpdates state={state} onState={onState} />
+          <PackageChecks state={state} onState={onState} open={path === "/jobs/patches"}
+            busy={updateBusy} onBusy={setUpdateBusy} />
+        </>
+      ) : null}
+      {view === "schedule" ? (
+        <div className="jobs-view" id="job-schedule" tabIndex={-1}>
+          {held ? <Notice message="The legacy full update is on hold. Check recovery evidence before planning a full run." /> : null}
+          <Month state={state} onState={onState} />
+          <UpdateCard state={state} busy={updateBusy} onBusy={setUpdateBusy} />
+        </div>
+      ) : null}
+      {view === "scan" ? <ScanCard state={state} open /> : null}
+      {view === "history" ? (
+        <section className="surface-card section-panel" id="job-history" tabIndex={-1}>
+          <h2 className="section-title">Maintenance history</h2>
+          <MaintenanceHistory state={state} />
+          <RunHistory label="Full update history" job={state.update} />
+          <RunHistory label="Scan history" job={state.scan} />
+        </section>
+      ) : null}
     </Page>
   );
 }
@@ -56,6 +90,7 @@ type Pending =
   | { action: "once"; date: string; time: string };
 
 function Month({ state, onState }: { state: ViewState; onState: (next: ViewState) => void }) {
+  const held = state.maintenance?.legacy_paused === true;
   const rules = state.calendar?.rules || [];
   const standing = state.calendar?.standing || [];
   const [cursor, setCursor] = useState(() => {
@@ -74,6 +109,7 @@ function Month({ state, onState }: { state: ViewState; onState: (next: ViewState
   const today = new Date();
 
   async function apply(action: Pending) {
+    if (held) return;
     setBusy(true);
     setMessage(null);
     const body =
@@ -115,9 +151,9 @@ function Month({ state, onState }: { state: ViewState; onState: (next: ViewState
   const tabDay = cells.find((cell) => cell.key === focusDay)?.key || cells.find((cell) => cell.today)?.key || cells.find((cell) => !cell.outside)?.key;
   const selectedKey = selected ? dateKey(selected) : "";
   const month = monthLabel.format(new Date(cursor.year, cursor.month, 1));
-  const weekly = updateRule(rules);
+  const weekly = held ? null : updateRule(rules);
   const hasSkippedDay = cells.some((cell) => cell.key === state.schedule?.skip);
-  const hasExtraDay = cells.some((cell) => cell.key === state.schedule?.once && state.schedule.once_time);
+  const hasExtraDay = !held && cells.some((cell) => cell.key === state.schedule?.once && state.schedule.once_time);
   const hasScheduleNotes = rules.some((rule) => rule.label !== "Update") || standing.length > 0;
 
   function moveDay(event: KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -158,7 +194,7 @@ function Month({ state, onState }: { state: ViewState; onState: (next: ViewState
               {weeks.map((week, weekIndex) => (
                 <div className="calendar-week" key={week[0].key} role="row">
                   {week.map((cell, dayIndex) => {
-                    const marks = dayMarks(cell.date, rules, state.schedule);
+                    const marks = dayMarks(cell.date, rules, state.schedule, held);
                     const active = selectedKey === cell.key;
                     const trigger = (
                       <button type="button" className="day" data-date={cell.key} data-outside={cell.outside || undefined} data-today={cell.today || undefined}
@@ -183,7 +219,7 @@ function Month({ state, onState }: { state: ViewState; onState: (next: ViewState
                           <Popover open={active} onOpenChange={(open) => setSelected(open ? cell.date : null)}>
                             <PopoverTrigger asChild>{trigger}</PopoverTrigger>
                             <PopoverContent onCloseAutoFocus={restoreDayFocus} aria-label={dayLabel(cell.date, [])}>
-                              <DayPanel date={cell.date} rules={rules} schedule={state.schedule} today={today} busy={busy} onPending={openConfirmation} />
+                              <DayPanel date={cell.date} rules={rules} schedule={state.schedule} today={today} busy={busy} held={held} onPending={openConfirmation} />
                             </PopoverContent>
                           </Popover>
                         )}
@@ -220,11 +256,11 @@ function Month({ state, onState }: { state: ViewState; onState: (next: ViewState
             else buttons.current.get(selectedKey)?.focus();
           }}>
             <SheetTitle>{dayLabel(selected, [])}</SheetTitle>
-            <DayPanel date={selected} rules={rules} schedule={state.schedule} today={today} busy={busy} onPending={openConfirmation} hideDate />
+            <DayPanel date={selected} rules={rules} schedule={state.schedule} today={today} busy={busy} held={held} onPending={openConfirmation} hideDate />
           </SheetContent>
         </Sheet>
       ) : null}
-      {pending ? <ScheduleConfirm pending={pending} busy={busy} returnFocus={returnFocus.current} onCancel={() => setPending(null)} onConfirm={() => void apply(pending)} /> : null}
+      {pending && !held ? <ScheduleConfirm pending={pending} busy={busy} returnFocus={returnFocus.current} onCancel={() => setPending(null)} onConfirm={() => void apply(pending)} /> : null}
     </section>
   );
 }
@@ -280,6 +316,7 @@ function DayPanel({
   schedule,
   today,
   busy,
+  held,
   onPending,
   hideDate = false,
 }: {
@@ -289,8 +326,10 @@ function DayPanel({
   schedule: ViewState["schedule"];
   today: Date;
   busy: boolean;
+  held: boolean;
   onPending: (pending: Pending) => void;
 }) {
+  if (held) return <p className="day-editor">The legacy full update is on hold.</p>;
   const key = dateKey(date);
   const weekly = updateRule(rules);
   const past = startOf(date) < startOf(today);
@@ -428,16 +467,16 @@ function monthCells(year: number, month: number, today: Date) {
   return cells;
 }
 
-function dayMarks(date: Date, rules: CalendarRule[], schedule: ViewState["schedule"]) {
+function dayMarks(date: Date, rules: CalendarRule[], schedule: ViewState["schedule"], held: boolean) {
   const key = dateKey(date);
   const weekly = updateRule(rules);
   const marks: string[] = [];
   if (schedule?.skip === key) {
     marks.push("Skipped");
-  } else if (weekly && weekdayIndex(date) === weekly.weekday) {
+  } else if (!held && weekly && weekdayIndex(date) === weekly.weekday) {
     marks.push(weekly.time);
   }
-  if (schedule?.once === key && schedule.once_time) {
+  if (!held && schedule?.once === key && schedule.once_time) {
     marks.push(`Once ${schedule.once_time}`);
   }
   return marks;
@@ -594,11 +633,7 @@ function PackageChecks({ state, onState, open, busy, onBusy }: UpdateActionProps
         <h2 className="section-title" id="patch-checks-title">Package and security checks</h2>
         <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => void check()}>{busy === "check" ? "Checking packages…" : "Check packages"}</Button>
       </div>
-      <dl className="job-summary">
-        <div><dt className="meta">Host packages</dt><dd>{patch.host}</dd></div>
-        <div><dt className="meta">Container packages</dt><dd>{patch.containers}</dd></div>
-      </dl>
-      <p className="meta">Checks show package candidates. Host-only security patches are applied separately on Proxmox.</p>
+      <p className="meta">Check local APT candidates for the host and eligible running containers.</p>
       {message ? <Notice tone={message.ok ? "success" : "error"} message={message.text} /> : null}
       <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
         <CollapsibleTrigger asChild>
@@ -607,6 +642,10 @@ function PackageChecks({ state, onState, open, busy, onBusy }: UpdateActionProps
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent className="job-details">
+          <dl className="job-summary">
+            <div><dt className="meta">Host packages</dt><dd>{patch.host}</dd></div>
+            <div><dt className="meta">Container packages</dt><dd>{patch.containers}</dd></div>
+          </dl>
           <h3>Application versions</h3>
           <p className={patch.plex?.version_status === "below" ? "patch-review" : undefined}>{patch.application}</p>
           {patch.plex?.version || patch.plex?.minimum ? (
@@ -648,17 +687,17 @@ function UpdateCard({ state, busy, onBusy }: UpdateActionProps) {
     <Card className="job-panel" id="update-job" tabIndex={-1} role="region" aria-labelledby="full-update-title">
       <div className="section-heading"><h2 className="section-title" id="full-update-title">Full stack update</h2><Badge value={state.update.status} /></div>
       <div className="job-summary">
-        <div><span className="meta">Next run</span><strong className="num">{state.update.next}</strong></div>
+        <div><span className="meta">Next run</span><strong className="num">{state.maintenance?.legacy_paused === true ? "On hold" : state.update.next}</strong></div>
         {state.schedule?.skip ? <div><span className="meta">Skipped occurrence</span><strong className="num">{state.schedule.skip}</strong></div> : null}
       </div>
       <p className="job-description">Upgrades container packages, pulls images, can recreate Compose services, and applies host security updates.</p>
       {message ? <Notice tone={message.ok ? "success" : "error"} message={message.text} /> : null}
       <p className="job-description">{state.update.detail}{state.update.elapsed ? ` · ${state.update.elapsed}` : ""}</p>
       {state.guest_updates.active ? <Notice message={`${guestName(state, state.guest_updates.active)} is updating`} /> : null}
-      <div className="row-actions">
+      {state.maintenance?.legacy_paused === true ? null : <div className="row-actions">
         <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => setDry(true)}>Preview full update</Button>
         {state.update.idle ? <Button type="button" variant="destructive" disabled={busy !== ""} onClick={() => setConfirm(true)}>Run full update</Button> : null}
-      </div>
+      </div>}
       <RunHistory label="Update history" job={state.update} />
       {confirm ? (
         <Confirm destructive title="Start the full stack update" confirmLabel="Start full update" busy={busy !== ""} onCancel={() => setConfirm(false)} onConfirm={() => void start("update")}>

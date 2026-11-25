@@ -37,6 +37,7 @@ from homelab_panel.collect import collect_snapshot, cpu_usage
 from homelab_panel.config import ConfigError, load_config, save_password_hash
 from homelab_panel.guests import check_guests, reboot_required, run_guest, running_container, startup_commands, update_guest
 from homelab_panel.inventory import GUEST_ID, check_packages, wanted_ids
+from homelab_panel.maintenance import Maintenance, MaintenanceError, checked_now
 from homelab_panel.self_update import UpdateError, describe, install_release
 from homelab_panel.schedule import apply_schedule, update_due
 from homelab_panel.signals import parse_resolv, pins_match, report_text
@@ -49,7 +50,7 @@ BODY_LIMIT = 4096
 
 
 class Panel:
-    def __init__(self, config, provider, assets, starter=None, releases=None, installer=None, packages=None, guest_runner=None):
+    def __init__(self, config, provider, assets, starter=None, releases=None, installer=None, packages=None, guest_runner=None, maintenance=None):
         self.config = config
         self.provider = provider
         self.assets = assets
@@ -58,6 +59,7 @@ class Panel:
         self.installer = installer
         self.packages = packages
         self.guest_runner = guest_runner
+        self.maintenance = maintenance or Maintenance(config)
         self._lock = threading.Lock()
         self._at = 0.0
         self._state = None
@@ -80,7 +82,7 @@ class Panel:
                 self._guest_updates = stored["guest_updates"]
 
     def _ttl(self):
-        if self._guest_active:
+        if self._guest_active or self.maintenance.active:
             return ACTIVE_CACHE_SECONDS
         if self._state and (not self._state["scan"]["idle"] or not self._state["update"]["idle"]):
             return ACTIVE_CACHE_SECONDS
@@ -103,6 +105,7 @@ class Panel:
                 self._apply_release(built, info)
                 self._apply_packages(built)
                 self._apply_guest_updates(built)
+                built["maintenance"] = self._maintenance_status(snapshot)
                 self._state = built
                 self._at = now
             return self._state
@@ -143,6 +146,29 @@ class Panel:
                 "active": "",
             }
         state["guest_updates"]["active"] = self._guest_active or ""
+        if stored and stored.get("checked_at"):
+            state["guest_updates"]["checked_at"] = stored["checked_at"]
+
+    def _maintenance_status(self, snapshot):
+        units = {}
+        for section in (snapshot.get("maintenance_units") or "").split("\n\n"):
+            props = dict(line.split("=", 1) for line in section.splitlines() if "=" in line)
+            if props.get("Id"):
+                units[props["Id"]] = props
+        legacy = units.get("homelab-update.timer", {})
+        security = units.get("homelab-security.timer", {})
+        paused = None
+        if legacy.get("ActiveState") == "active":
+            paused = False
+        elif legacy.get("ActiveState") == "inactive" and legacy.get("UnitFileState") in {"disabled", "masked"}:
+            paused = True
+        if self.maintenance.settings.get("legacy_hold") is True:
+            paused = True
+        auto = self.maintenance.settings.get("security_auto")
+        timer = "not_configured" if not self.maintenance.can_change or not isinstance(auto, dict) or auto.get("enabled") is not True else ""
+        if not timer and security.get("ActiveState") in {"active", "inactive"}:
+            timer = "scheduled" if security["ActiveState"] == "active" else "paused"
+        return self.maintenance.status(timer, legacy_paused=paused)
 
     def handle(self, method, path, body=b"", headers=None):
         headers = headers or {}
@@ -174,6 +200,9 @@ class Panel:
                 return self._schedule_update(body)
             if method == "POST" and clean == "/api/password":
                 return self._change_password(body, headers)
+            reviewed = re.fullmatch(r"/api/maintenance/(security|apps/[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79})/(preview|apply)", clean)
+            if method == "POST" and reviewed:
+                return self._reviewed_action(reviewed[1].removeprefix("apps/"), reviewed[2], body)
             guest_update = re.fullmatch(r"/api/guests/([^/]+)/update", clean)
             if method == "POST" and guest_update:
                 return self._update_guest(guest_update.group(1), body)
@@ -192,6 +221,32 @@ class Panel:
         headers = {"Content-Type": asset[0], "Cache-Control": "no-store"}
         return 200, headers, asset[1]
 
+    def _reviewed_action(self, target, action, body):
+        if len(body) > BODY_LIMIT:
+            return self._json(400, {"error": "The request is too large."})
+        payload = _payload(body)
+        if payload is None:
+            return self._json(400, {"error": "The request could not be read."})
+        try:
+            if action == "preview":
+                return self._json(200, self.maintenance.preview(target))
+            if payload.get("confirm") is not True:
+                return self._json(400, {"error": "The update was not confirmed."})
+            with self._lock:
+                if self._guest_active:
+                    return self._json(409, {"error": "A container update is active."})
+                self.maintenance.apply(target, payload.get("plan_id"), self._invalidate)
+                self._state = None
+            self._log(f"Requested reviewed maintenance for {target}")
+            return self._json(202, {"started": target})
+        except MaintenanceError as exc:
+            return self._json(409, {"error": str(exc)})
+
+    def _invalidate(self):
+        with self._lock:
+            self._state = None
+            self._at = 0.0
+
     def _action(self, path, body):
         if len(body) > BODY_LIMIT:
             return self._json(400, {"error": "The request is too large."})
@@ -199,7 +254,11 @@ class Panel:
         if payload is None:
             return self._json(400, {"error": "The request could not be read."})
         kind = "scan" if path.endswith("/scan") else "disk" if path.endswith("/disk") else "update"
+        if self.maintenance.active:
+            return self._json(409, {"error": "Reviewed maintenance is active."})
         if kind == "update":
+            if self.maintenance.settings.get("legacy_hold") is True:
+                return self._json(409, {"error": "The legacy full update is on hold."})
             payload = _payload(body)
             if payload is None:
                 return self._json(400, {"error": "The request could not be read."})
@@ -247,6 +306,8 @@ class Panel:
         save_checks(self.config, self._packages, self._guest_updates)
 
     def _panel_update(self):
+        if self.maintenance.active or self._guest_active:
+            return self._json(409, {"error": "Wait for maintenance to finish before restarting the panel."})
         if self.installer is None:
             return self._json(400, {"error": "This copy cannot install a release."})
         try:
@@ -261,7 +322,7 @@ class Panel:
     def _check_packages(self):
         if self.packages is None:
             return self._json(400, {"error": "This copy cannot check packages."})
-        result = self.packages()
+        result = {**self.packages(), "checked_at": checked_now()}
         with self._lock:
             self._packages = result
             self._state = None
@@ -278,6 +339,7 @@ class Panel:
             result["active"] = self._guest_active or ""
             self._guest_updates = {
                 "checked": True,
+                "checked_at": checked_now(),
                 "error": result.get("error") or "",
                 "rows": result.get("rows") or [],
             }
@@ -304,13 +366,26 @@ class Panel:
         if snapshot.get("scan_active") or snapshot.get("update_active"):
             return self._json(400, {"error": "A job is already running."})
         with self._lock:
-            if self._guest_active:
+            if self._guest_active or self.maintenance.active:
                 return self._json(400, {"error": "A job is already running."})
+            lease = self.maintenance.exclusive() if self.maintenance.can_change else None
+            if lease is not None:
+                try:
+                    lease.__enter__()
+                except MaintenanceError as exc:
+                    return self._json(409, {"error": str(exc)})
             directories = self._compose_dirs(guest_id)
             self._guest_active = guest_id
             self._state = None
             self._at = 0.0
-        threading.Thread(target=self._run_guest_update, args=(guest_id, directories), daemon=True).start()
+        try:
+            threading.Thread(target=self._run_guest_update, args=(guest_id, directories, lease), daemon=True).start()
+        except RuntimeError:
+            if lease is not None:
+                lease.__exit__(None, None, None)
+            with self._lock:
+                self._guest_active = ""
+            return self._json(503, {"error": "The container update could not start."})
         return self._json(202, {"started": guest_id})
 
     def _compose_dirs(self, guest_id):
@@ -322,7 +397,7 @@ class Panel:
                 return list(row.get("compose") or [])
         return None
 
-    def _run_guest_update(self, guest_id, directories):
+    def _run_guest_update(self, guest_id, directories, lease=None):
         error = "The update did not finish."
         reboot = False
         try:
@@ -330,6 +405,9 @@ class Panel:
             reboot = reboot_required(guest_id, self.guest_runner)
         except Exception:
             error = "The update did not finish."
+        finally:
+            if lease is not None:
+                lease.__exit__(None, None, None)
         with self._lock:
             self._mark_guest(guest_id, error, reboot)
             self._guest_active = ""
@@ -347,6 +425,7 @@ class Panel:
             if str(copied.get("id") or "") == guest_id:
                 copied["error"] = error
                 copied["reboot"] = bool(reboot)
+                copied["recheck"] = True
                 found = True
             rows.append(copied)
         if not found:
@@ -358,11 +437,13 @@ class Panel:
                     "compose": [],
                     "floating": False,
                     "reboot": bool(reboot),
+                    "recheck": True,
                     "error": error,
                 }
             )
         self._guest_updates = {
             "checked": bool(stored.get("checked")),
+            "checked_at": stored.get("checked_at"),
             "error": stored.get("error") or "",
             "rows": rows,
         }
@@ -484,6 +565,8 @@ class Panel:
         payload = _payload(body)
         if payload is None or payload.get("confirm") is not True:
             return self._json(400, {"error": "The schedule was not confirmed."})
+        if self.maintenance.settings.get("legacy_hold") is True and payload.get("action") != "skip":
+            return self._json(409, {"error": "The legacy full update is on hold."})
         program = Path(sys.argv[0]).resolve()
         status, result = apply_schedule(
             self.config,
@@ -704,6 +787,7 @@ def main(argv=None):
     parser.add_argument("--config")
     parser.add_argument("--update", action="store_true")
     parser.add_argument("--update-due", action="store_true")
+    parser.add_argument("--security-auto", action="store_true")
     args = parser.parse_args(argv)
     if args.update_due:
         return _update_due(args.config)
@@ -715,6 +799,12 @@ def main(argv=None):
         config = load_config(args.config)
     except ConfigError as exc:
         raise SystemExit(str(exc)) from exc
+    if args.security_auto:
+        try:
+            print(Maintenance(config).automatic_security())
+        except MaintenanceError as exc:
+            raise SystemExit(str(exc)) from exc
+        return
     if not config.get("password_hash"):
         raise SystemExit("config needs a password_hash")
     serve(config)

@@ -117,6 +117,9 @@ def save_schedule(config, payload):
 
 def update_due(config, today=None):
     """True when the Sunday service should run. A matching skip date stops it."""
+    maintenance = config.get("maintenance")
+    if isinstance(maintenance, dict) and maintenance.get("legacy_hold") is True:
+        return False
     today = today or date.today()
     skipped = parse_day(str(load_schedule(config).get("skip") or ""))
     return skipped != today

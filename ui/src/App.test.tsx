@@ -240,10 +240,10 @@ describe("master panel", () => {
 
   it("exposes past runs and keeps logs out of collapsed rows", () => {
     const older = { heading: "2026-01-01 04:00", started_at: "2026-01-01T04:00:00Z", ok: false, result: "incomplete", steps: [], transcript: "Earlier run log", hidden_lines: 0 };
-    const html = page("/jobs", { ...fixture, scan: { ...fixture.scan, history: [...fixture.scan.history, older] } });
+    const html = page("/jobs/history", { ...fixture, scan: { ...fixture.scan, history: [...fixture.scan.history, older] } });
     const document = new DOMParser().parseFromString(html, "text/html");
     const scan = document.querySelector('[aria-label="Scan history"]');
-    const update = document.querySelector('[aria-label="Update history"]');
+    const update = document.querySelector('[aria-label="Full update history"]');
     expect(scan?.querySelectorAll("details:not([open])")).toHaveLength(2);
     expect(scan?.querySelector("time")?.dateTime).toBe(older.started_at);
     expect(scan?.textContent).toContain("Incomplete");
@@ -311,7 +311,7 @@ describe("master panel", () => {
   it("separates package checks from the full stack update and its confirmation", () => {
     const html = page("/jobs/update");
     const doc = new DOMParser().parseFromString(html, "text/html");
-    const checks = doc.querySelector("#patch-checks")?.textContent;
+    const checks = new DOMParser().parseFromString(page("/jobs/patches"), "text/html").querySelector("#patch-checks")?.textContent;
     const update = doc.querySelector("#update-job")?.textContent;
     expect(checks).toContain("Check packages");
     expect(checks).toContain("Host packages");
@@ -483,7 +483,7 @@ describe("master panel", () => {
   });
 
   it("opens jobs on a month calendar and leaves housekeeping off it", () => {
-    const html = page("/jobs", {
+    const html = page("/jobs/schedule", {
       ...fixture,
       week: [
         { unit: "logrotate.timer", label: "Log rotate", next: "Wed 03 Jan 00:00", soon: true },
@@ -523,7 +523,7 @@ describe("master panel", () => {
     expect(html).not.toContain("The coming Sunday update will not run");
     expect(html).not.toContain("Start the update");
     expect(html).not.toContain("restarts playback");
-    const empty = page("/jobs", {
+    const empty = page("/jobs/schedule", {
       ...fixture,
       week: [{ unit: "logrotate.timer", label: "Log rotate", next: "Wed 03 Jan 00:00", soon: false }],
       calendar: { rules: [], standing: [] },
@@ -673,6 +673,13 @@ async function exercisePanel(
     if (options?.method === "POST") {
       writes.push({ url: input, payload: typeof options.body === "string" ? JSON.parse(options.body) : undefined });
       if (input === "/api/login") return Response.json({ error: "Incorrect password." }, { status: 401 });
+      if (input === "/api/maintenance/security/preview") {
+        return Response.json({
+          id: "fixture-review", target: "security", available: true, blocker: "",
+          checked_at: "2026-11-25T10:00:00Z", expires_at: "2026-11-25T10:30:00Z",
+          backup: null, packages: [{ name: "curl", current: "1.0", candidate: "1.1", critical: false }],
+        });
+      }
       return Response.json({ ok: true }, { status: 202 });
     }
     return mode === "signed-out" ? new Response(null, { status: 401 }) : Response.json(state);
@@ -708,6 +715,32 @@ function enter(input: HTMLInputElement | null, value: string) {
 }
 
 describe("redesigned workflows", () => {
+  it("shows the decision view by default and keeps risky operations behind review", async () => {
+    const state: ViewState = {
+      ...fixture,
+      packages: { ...fixture.packages, checked: true, security: 0 },
+      maintenance: {
+        security: { id: "security", name: "Host security", can_preview: true, blocker: "", backup: null,
+          last_run: null, automation: "paused" },
+        apps: [], legacy_paused: true, active: false,
+      },
+    };
+    await exercisePanel("/jobs", async (panel, writes) => {
+      expect(panel.textContent).toContain("No security candidates in the last check");
+      expect(panel.querySelector(".calendar-grid")).toBeNull();
+      await press(control("Review host patches", panel));
+      expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Target is the Proxmox host");
+      await press(control("Cancel", document.querySelector('[role="dialog"]')!));
+      expect(writes).toEqual([{ url: "/api/maintenance/security/preview", payload: {} }]);
+      await press(control("Review host patches", panel));
+      await press(control("Install host patches", document.querySelector('[role="dialog"]')!));
+      expect(writes.at(-1)).toEqual({ url: "/api/maintenance/security/apply", payload: { plan_id: "fixture-review", confirm: true } });
+      await press(panel.querySelector('nav[aria-label="Job views"] a[href="/jobs/schedule"]'));
+      expect(panel.textContent).toContain("The legacy full update is on hold");
+      expect(panel.textContent).not.toContain("Run full update");
+    }, state);
+  });
+
   it("keeps navigation and reports accessible without dispatching an action", async () => {
     await exercisePanel("/", async (panel, writes) => {
       expect(panel.querySelector('a[href="/api/report"]')?.textContent).toBe("Report");
@@ -749,7 +782,7 @@ describe("redesigned workflows", () => {
       calendar: { rules: [{ label: "Update", weekdays: [6], time: "06:00" }], standing: [] },
     };
     try {
-      await exercisePanel("/jobs", async (panel, writes) => {
+      await exercisePanel("/jobs/schedule", async (panel, writes) => {
         const day = () => panel.querySelector<HTMLButtonElement>('button[data-date="2026-11-26"]');
         expect(day()?.getAttribute("aria-label")).toBe("2026 m. lapkričio 26 d., ketvirtadienis");
         await press(day());
@@ -774,8 +807,11 @@ describe("redesigned workflows", () => {
       await press(control("Run full update", panel));
       await press(control("Cancel", document.querySelector(".dialog-surface")!));
       expect(writes).toEqual([]);
+      await press(panel.querySelector('nav[aria-label="Job views"] a[href="/jobs/scan"]'));
       await press(control("Run the scan", panel));
+      await press(panel.querySelector('nav[aria-label="Job views"] a[href="/jobs"]'));
       await press(control("Check packages", panel));
+      await press(panel.querySelector('nav[aria-label="Job views"] a[href="/jobs/schedule"]'));
       await press(control("Preview full update", panel));
       await press(control("Start the dry run", document.querySelector(".dialog-surface")!));
       await press(control("Run full update", panel));
@@ -818,7 +854,7 @@ describe("remaining host action contracts", () => {
       schedule: { skip: skipped ? "2026-11-29" : "", weekly: null, once: "", once_time: "" },
     };
     try {
-      await exercisePanel("/jobs", async (panel, writes) => {
+      await exercisePanel("/jobs/schedule", async (panel, writes) => {
         await press(panel.querySelector('button[data-date="2026-11-29"]'));
         expect(writes).toEqual([]);
         if (operation === "move") {
