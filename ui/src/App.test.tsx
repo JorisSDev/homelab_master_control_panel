@@ -308,17 +308,20 @@ describe("master panel", () => {
     expect(html).not.toContain("machineIdentifier");
   });
 
-  it("keeps the Sunday confirmation behind a second button", () => {
+  it("separates package checks from the full stack update and its confirmation", () => {
     const html = page("/jobs/update");
-    expect(html.indexOf("Check for updates")).toBeLessThan(html.indexOf("Update all"));
-    expect(html).toContain("Update all");
-    expect(html).toContain("Check for updates");
-    expect(html).toContain("Dry run");
-    expect(html).toContain("Not checked");
-    expect(html).toContain("Next run");
-    expect(html).toContain("Host packages");
-    expect(html).toContain("Guest 201 · Packages");
-    expect(html).not.toContain("Start the update");
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const checks = doc.querySelector("#patch-checks")?.textContent;
+    const update = doc.querySelector("#update-job")?.textContent;
+    expect(checks).toContain("Check packages");
+    expect(checks).toContain("Host packages");
+    expect(checks).toContain("Not checked");
+    expect(checks).not.toContain("Run full update");
+    expect(update).toContain("Run full update");
+    expect(update).toContain("Preview full update");
+    expect(update).toContain("Next run");
+    expect(update).not.toContain("Check packages");
+    expect(html).not.toContain("Start full update");
     expect(html).not.toContain("Start the dry run");
     expect(html).not.toContain("restarts playback");
     expect(html).not.toContain("The last report was a dry run");
@@ -333,7 +336,7 @@ describe("master panel", () => {
       guest_updates: { ...fixture.guest_updates, active: "201" },
     });
     expect(updating).toContain("media is updating");
-    expect(updating).not.toContain("Start the update");
+    expect(updating).not.toContain("Start full update");
   });
 
   it("shows recorded patch candidates separately from missing coverage", () => {
@@ -354,12 +357,12 @@ describe("master panel", () => {
     };
     const overview = page("/", state);
     expect(overview).toContain("Patch status");
-    expect(overview).toContain('href="/jobs/update"');
+    expect(overview).toContain('href="/jobs/patches"');
     expect(overview).toContain("No candidates reported");
     expect(overview).toContain("2 security · 1 other");
     expect(overview).toContain("1 of 3 running containers reported");
     expect(overview).toContain("Plex below minimum");
-    const jobs = page("/jobs/update", state);
+    const jobs = page("/jobs/patches", state);
     expect(jobs).toContain("Check incomplete");
     expect(jobs).toContain("The check did not finish.");
     expect(jobs).toContain("Outside container check");
@@ -460,7 +463,7 @@ describe("master panel", () => {
         ],
       },
     };
-    const html = page("/jobs/update", checked);
+    const html = page("/jobs/patches", checked);
     expect(html).toContain("openssl");
     expect(html).toContain("1.0");
     expect(html).toContain("1.1");
@@ -474,7 +477,7 @@ describe("master panel", () => {
       ...fixture,
       packages: { ...fixture.packages, checked: true, total: 0, security: 0, pending: 0 },
     };
-    const emptyResult = page("/jobs/update", waiting);
+    const emptyResult = page("/jobs/patches", waiting);
     expect(emptyResult).toContain("No candidates reported");
     expect(emptyResult).toContain("0 of 1 running containers reported");
   });
@@ -708,8 +711,8 @@ describe("redesigned workflows", () => {
   it("keeps navigation and reports accessible without dispatching an action", async () => {
     await exercisePanel("/", async (panel, writes) => {
       expect(panel.querySelector('a[href="/api/report"]')?.textContent).toBe("Report");
-      await press(panel.querySelector('a[href="/jobs/update"]'));
-      expect(panel.querySelector('#update-job [aria-label="Machine package coverage"]')).not.toBeNull();
+      await press(panel.querySelector('a[href="/jobs/patches"]'));
+      expect(panel.querySelector('#patch-checks [aria-label="Machine package coverage"]')).not.toBeNull();
       expect(writes).toEqual([]);
       await press(control("More", panel));
       const sheet = document.querySelector('[aria-label="More pages"]');
@@ -765,15 +768,18 @@ describe("redesigned workflows", () => {
 
   it("preserves the scan, package check, dry run, and update requests", async () => {
     await exercisePanel("/jobs/update", async (panel, writes) => {
-      await press(control("Dry run", panel));
+      await press(control("Preview full update", panel));
+      expect(document.querySelector(".dialog-surface")?.textContent).toContain("refresh package lists");
+      await press(control("Cancel", document.querySelector(".dialog-surface")!));
+      await press(control("Run full update", panel));
       await press(control("Cancel", document.querySelector(".dialog-surface")!));
       expect(writes).toEqual([]);
       await press(control("Run the scan", panel));
-      await press(control("Check for updates", panel));
-      await press(control("Dry run", panel));
+      await press(control("Check packages", panel));
+      await press(control("Preview full update", panel));
       await press(control("Start the dry run", document.querySelector(".dialog-surface")!));
-      await press(control("Update all", panel));
-      await press(control("Start the update", document.querySelector(".dialog-surface")!));
+      await press(control("Run full update", panel));
+      await press(control("Start full update", document.querySelector(".dialog-surface")!));
       expect(writes).toEqual([
         { url: "/api/actions/scan" },
         { url: "/api/packages/check" },

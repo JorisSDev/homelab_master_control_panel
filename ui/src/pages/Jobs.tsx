@@ -22,17 +22,20 @@ export function Jobs({
   path: string;
   onState: (next: ViewState) => void;
 }) {
+  const [updateBusy, setUpdateBusy] = useState<UpdateBusy>("");
   useEffect(() => {
-    const id = path === "/jobs/scan" ? "scan-job" : path === "/jobs/update" ? "update-job" : "";
+    const id = path === "/jobs/scan" ? "scan-job" : path === "/jobs/update" ? "update-job" : path === "/jobs/patches" ? "patch-checks" : "";
     if (id) document.getElementById(id)?.focus();
   }, [path]);
 
   return (
     <Page title="Jobs" context="Maintenance schedule and run history.">
       <Month state={state} onState={onState} />
+      <PackageChecks state={state} onState={onState} open={path === "/jobs/patches"}
+        busy={updateBusy} onBusy={setUpdateBusy} />
       <div className="two-panels job-panels">
         <ScanCard state={state} open={path === "/jobs/scan"} />
-        <UpdateCard state={state} onState={onState} open={path === "/jobs/update"} />
+        <UpdateCard state={state} busy={updateBusy} onBusy={setUpdateBusy} />
       </div>
     </Page>
   );
@@ -559,21 +562,21 @@ function Timeline({ steps }: { steps: ViewState["scan"]["timeline"] }) {
   );
 }
 
-function UpdateCard({ state, onState, open }: { state: ViewState; onState: (next: ViewState) => void; open: boolean }) {
+type UpdateBusy = "" | "check" | "dry" | "update";
+type UpdateActionProps = { state: ViewState; busy: UpdateBusy; onBusy: (next: UpdateBusy) => void };
+
+function PackageChecks({ state, onState, open, busy, onBusy }: UpdateActionProps & { onState: (next: ViewState) => void; open: boolean }) {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const [busy, setBusy] = useState("");
-  const [confirm, setConfirm] = useState(false);
-  const [dry, setDry] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(open);
   useEffect(() => { if (open) setDetailsOpen(true); }, [open]);
   const patch = patchStatusOf(state);
 
   async function check() {
-    setBusy("check");
+    onBusy("check");
     setMessage(null);
     const host = await postJson("/api/packages/check");
     const guests = await postJson("/api/guests/check");
-    setBusy("");
+    onBusy("");
     const rows = guests.data.rows;
     const partial = Array.isArray(rows) && rows.some((row) => row?.error);
     const ok = host.ok && guests.ok && host.data.checked !== false && guests.data.checked !== false
@@ -585,31 +588,18 @@ function UpdateCard({ state, onState, open }: { state: ViewState; onState: (next
     }
   }
 
-  async function start(kind: "update" | "dry") {
-    setBusy(kind);
-    setMessage(null);
-    const result = await postJson("/api/actions/update", kind === "dry" ? { confirm: true, dry: true } : { confirm: true });
-    setBusy("");
-    setConfirm(false);
-    setDry(false);
-    setMessage({ ok: result.ok, text: result.ok ? kind === "dry" ? "Starting the dry run." : "Starting the update." : String(result.data.error || "The update did not start.") });
-  }
-
   return (
-    <Card className="job-panel" id="update-job" tabIndex={-1} role="region" aria-label="Sunday update">
-      <div className="section-heading"><h2 className="section-title">Sunday update</h2><Badge value={state.update.status} /></div>
-      <div className="job-summary">
-        <div><span className="meta">Next run</span><strong className="num">{state.update.next}</strong></div>
-        <div><span className="meta">Host packages</span><strong>{patch.host}</strong></div>
+    <Card className="job-panel" id="patch-checks" tabIndex={-1} role="region" aria-labelledby="patch-checks-title">
+      <div className="section-heading">
+        <h2 className="section-title" id="patch-checks-title">Package and security checks</h2>
+        <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => void check()}>{busy === "check" ? "Checking packages…" : "Check packages"}</Button>
       </div>
+      <dl className="job-summary">
+        <div><dt className="meta">Host packages</dt><dd>{patch.host}</dd></div>
+        <div><dt className="meta">Container packages</dt><dd>{patch.containers}</dd></div>
+      </dl>
+      <p className="meta">Checks show package candidates. Host-only security patches are applied separately on Proxmox.</p>
       {message ? <Notice tone={message.ok ? "success" : "error"} message={message.text} /> : null}
-      <p className="job-description">{state.update.detail}{state.update.elapsed ? ` · ${state.update.elapsed}` : ""}</p>
-      {state.guest_updates.active ? <Notice message={`${guestName(state, state.guest_updates.active)} is updating`} /> : null}
-      <div className="row-actions">
-        <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => void check()}>{busy === "check" ? "Checking for updates…" : "Check for updates"}</Button>
-        <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => setDry(true)}>Dry run</Button>
-        {state.update.idle ? <Button type="button" disabled={busy !== ""} onClick={() => setConfirm(true)}>Update all</Button> : null}
-      </div>
       <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
         <CollapsibleTrigger asChild>
           <Button type="button" variant="ghost" className="job-details-toggle">
@@ -633,20 +623,51 @@ function UpdateCard({ state, onState, open }: { state: ViewState; onState: (next
           {patch.running > 0 ? <p className="meta">{patch.reported} of {patch.running} running containers reported</p> : null}
           {state.guest_updates.error ? <p className="meta">{state.guest_updates.error}</p> : null}
           <ContainerPatchDetails patch={patch} />
-          {(state.update.history[0]?.steps || []).map((step, index) => (
-            <p key={`${step}-${index}`}>{step}</p>
-          ))}
         </CollapsibleContent>
       </Collapsible>
+    </Card>
+  );
+}
+
+function UpdateCard({ state, busy, onBusy }: UpdateActionProps) {
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [confirm, setConfirm] = useState(false);
+  const [dry, setDry] = useState(false);
+
+  async function start(kind: "update" | "dry") {
+    onBusy(kind);
+    setMessage(null);
+    const result = await postJson("/api/actions/update", kind === "dry" ? { confirm: true, dry: true } : { confirm: true });
+    onBusy("");
+    setConfirm(false);
+    setDry(false);
+    setMessage({ ok: result.ok, text: result.ok ? kind === "dry" ? "Starting the dry run." : "Starting the full update." : String(result.data.error || "The update did not start.") });
+  }
+
+  return (
+    <Card className="job-panel" id="update-job" tabIndex={-1} role="region" aria-labelledby="full-update-title">
+      <div className="section-heading"><h2 className="section-title" id="full-update-title">Full stack update</h2><Badge value={state.update.status} /></div>
+      <div className="job-summary">
+        <div><span className="meta">Next run</span><strong className="num">{state.update.next}</strong></div>
+        {state.schedule?.skip ? <div><span className="meta">Skipped occurrence</span><strong className="num">{state.schedule.skip}</strong></div> : null}
+      </div>
+      <p className="job-description">Upgrades container packages, pulls images, can recreate Compose services, and applies host security updates.</p>
+      {message ? <Notice tone={message.ok ? "success" : "error"} message={message.text} /> : null}
+      <p className="job-description">{state.update.detail}{state.update.elapsed ? ` · ${state.update.elapsed}` : ""}</p>
+      {state.guest_updates.active ? <Notice message={`${guestName(state, state.guest_updates.active)} is updating`} /> : null}
+      <div className="row-actions">
+        <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => setDry(true)}>Preview full update</Button>
+        {state.update.idle ? <Button type="button" variant="destructive" disabled={busy !== ""} onClick={() => setConfirm(true)}>Run full update</Button> : null}
+      </div>
       <RunHistory label="Update history" job={state.update} />
       {confirm ? (
-        <Confirm destructive title="Start the update" confirmLabel="Start the update" busy={busy !== ""} onCancel={() => setConfirm(false)} onConfirm={() => void start("update")}>
-          <p>This restarts playback, recreates Compose services, and has no vzdump rollback.</p>
+        <Confirm destructive title="Start the full stack update" confirmLabel="Start full update" busy={busy !== ""} onCancel={() => setConfirm(false)} onConfirm={() => void start("update")}>
+          <p>This upgrades container packages and may interrupt playback and recreate Compose services. Verify usable backups for affected apps before continuing.</p>
         </Confirm>
       ) : null}
       {dry ? (
         <Confirm title="Start the dry run" confirmLabel="Start the dry run" busy={busy !== ""} onCancel={() => setDry(false)} onConfirm={() => void start("dry")}>
-          <p>This previews the Sunday update and does not install packages.</p>
+          <p>The preview simulates upgrades and validates Compose configuration. It may refresh package lists and finish configuring pending packages.</p>
         </Confirm>
       ) : null}
     </Card>

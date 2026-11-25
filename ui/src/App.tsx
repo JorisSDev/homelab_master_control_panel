@@ -72,7 +72,7 @@ export function App({ initial = null, live = true, initialPath = "/" }: Props) {
   useEffect(() => {
     const previous = previousPath.current;
     previousPath.current = path;
-    if (previous.split("/")[1] === path.split("/")[1] || path === "/jobs/scan" || path === "/jobs/update") return;
+    if (previous.split("/")[1] === path.split("/")[1] || path === "/jobs/scan" || path === "/jobs/update" || path === "/jobs/patches") return;
     const machineDetail = path.startsWith("/guests/");
     if (machineDetail && window.matchMedia?.("(max-width: 1100px)").matches) return;
     const frame = window.requestAnimationFrame(() => {
