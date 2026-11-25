@@ -5,7 +5,7 @@ from __future__ import annotations
 from homelab_panel.identity import minimum_status, parse_identity
 from homelab_panel.parse_logs import parse_runs
 from homelab_panel.schedule import load_schedule, overlay_calendar, public_schedule
-from homelab_panel.signals import blast_lines, house_calendar, signature_age_days, vzdump_has_job
+from homelab_panel.signals import blast_lines, house_calendar, signature_age_days
 
 TIMER_LABELS = {
     "homelab-scan.timer": "Daily scan",
@@ -242,23 +242,48 @@ def _das(config, snapshot, state):
 
 
 def _protection(config, snapshot, state):
-    has_job = vzdump_has_job(snapshot.get("vzdump_text") or "")
+    evidence = snapshot.get("backups") or {}
+    coverage = evidence.get("coverage") or []
+    archives = evidence.get("archives") or []
+    complete = evidence.get("complete") is True
+    archives_complete = evidence.get("archives_complete") is True
     notes = {str(item.get("id")): str(item.get("note") or "") for item in config.get("single_copy") or [] if isinstance(item, dict)}
     rows = []
     for guest in state["services"]["rows"]:
+        guest_id = guest["id"]
+        matching = [(job, item) for job in coverage for item in job["guests"]
+                    if isinstance(item, dict) and str(item.get("id")) == guest_id]
+        scheduled = [(job, item) for job, item in matching if job["enabled"]]
+        upcoming = [job["next_run"] for job, _ in scheduled if _backup_timestamp(job["next_run"])]
+        destinations = sorted({job["storage"] for job, _ in scheduled if isinstance(job["storage"], str)})
+        excluded = any(volume.get("included") in (0, "0") for _, item in scheduled
+                       for volume in (item.get("children") or []) if isinstance(volume, dict))
+        found = [item for item in archives if str(item.get("vmid")) == guest_id and _backup_timestamp(item.get("ctime"))]
+        latest = max(found, key=lambda item: item["ctime"], default=None)
+        status = "Scheduled" if scheduled else "Schedule unknown" if not complete else "Schedule disabled" if matching else "No schedule"
         rows.append(
             {
                 "name": guest["name"],
-                "id": guest["id"],
-                "backup": "Scheduled" if has_job else "No job",
+                "id": guest_id,
+                "backup": status,
+                "next_backup": min(upcoming, default=None),
+                "backup_destinations": destinations,
+                "latest_backup": {"at": latest["ctime"], "storage": latest["storage"]} if latest else None,
+                "archives_complete": archives_complete,
+                "backup_exclusions": excluded,
                 "snapshot": "None",
-                "copy": notes.get(guest["id"]) or "",
+                "copy": notes.get(guest_id) or "",
             }
         )
     mount = str((config.get("das") or {}).get("mount") or "")
     if mount:
-        rows.append({"name": mount, "id": "", "backup": "Scheduled" if has_job else "No job", "snapshot": "None", "copy": ""})
-    return {"has_job": has_job, "rows": rows}
+        rows.append({"name": mount, "id": "", "backup": "Outside guest backups", "snapshot": "None", "copy": ""})
+    has_job = True if any(job["enabled"] for job in coverage) else False if complete else None
+    return {"has_job": has_job, "coverage_complete": complete, "rows": rows}
+
+
+def _backup_timestamp(value):
+    return type(value) is int and 0 < value < 253402300800
 
 
 def _scan_meaning(config, snapshot, state, now):
@@ -404,8 +429,10 @@ def _attention(state):
         items.append({"severity": "down", "text": finding.get("result") or "A job failed", "href": href})
     if (state.get("storage") or {}).get("status") == "Low on disk":
         items.append({"severity": "attention", "text": state["storage"].get("summary") or "Low on disk", "href": "/storage"})
-    if not state["protection"]["has_job"]:
+    if state["protection"]["has_job"] is False:
         items.append({"severity": "attention", "text": "No backup schedule was detected.", "href": "/storage"})
+    if not state["protection"]["coverage_complete"]:
+        items.append({"severity": "unknown", "text": "Some backup schedules could not be read.", "href": "/storage"})
     for row in state["reach"]["monitors"].get("rows") or []:
         if row.get("status") == "down":
             items.append({"severity": "down", "text": f"{row.get('name')} is down", "href": "/reach"})

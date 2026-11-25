@@ -88,6 +88,47 @@ def snapshot(**overrides):
 
 
 class StateTests(unittest.TestCase):
+    def test_backup_visibility_uses_resolved_coverage_and_available_archives(self):
+        responses = {
+            "/cluster/backup": [
+                {"id": "daily", "enabled": 1, "next-run": 1800000000, "storage": "vault"},
+                {"id": "old", "enabled": 0, "storage": "vault"},
+            ],
+            "/cluster/backup/daily/included_volumes": {"children": [
+                {"id": 201, "children": [{"included": 1}, {"included": 0}]},
+            ]},
+            "/cluster/backup/old/included_volumes": {"children": [{"id": 208}]},
+            "/cluster/resources": [
+                {"storage": "vault", "node": "demo", "content": "backup", "status": "available"},
+            ],
+            "/nodes/demo/storage/vault/content": [
+                {"vmid": 201, "ctime": 1790000000}, {"vmid": 201, "ctime": 1790000060},
+            ],
+        }
+
+        def read(command):
+            self.assertEqual(command[:2], ["pvesh", "get"])
+            return json.dumps(responses.get(command[2]))
+
+        config = {**CONFIG, "vm": {"id": "216"}, "das": {"mount": "/example"}}
+        protection = build_state(config, snapshot(backups=collect.read_backups(read)))["protection"]
+        rows = {row["id"]: row for row in protection["rows"]}
+        self.assertEqual([rows[key]["backup"] for key in ("201", "208", "216", "")],
+                         ["Scheduled", "Schedule disabled", "No schedule", "Outside guest backups"])
+        self.assertEqual(rows["201"]["next_backup"], 1800000000)
+        self.assertTrue(rows["201"]["backup_exclusions"])
+        self.assertEqual(rows["201"]["latest_backup"], {"at": 1790000060, "storage": "vault"})
+        self.assertIsNone(rows["208"]["latest_backup"])
+
+        del responses["/cluster/backup/old/included_volumes"]
+        del responses["/nodes/demo/storage/vault/content"]
+        protection = build_state(config, snapshot(backups=collect.read_backups(read)))["protection"]
+        rows = {row["id"]: row for row in protection["rows"]}
+        self.assertTrue(protection["has_job"])
+        self.assertFalse(protection["coverage_complete"])
+        self.assertEqual(rows["208"]["backup"], "Schedule unknown")
+        self.assertFalse(rows["208"]["archives_complete"])
+
     def test_identity_keeps_only_version_and_claimed(self):
         parsed = parse_identity(IDENTITY)
         self.assertEqual(parsed, {"version": "4.5.6-example", "claimed": "1"})

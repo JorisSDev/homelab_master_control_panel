@@ -1,5 +1,6 @@
 import { HardDrive } from "lucide-react";
 import { useState } from "react";
+import { BackupArchive, BackupSchedule } from "../components/BackupEvidence";
 import { Badge, Disclosure, Empty, Meter, Notice, Page, Panel } from "../components/Chrome";
 import { Button } from "../components/ui/button";
 import { Table, TableCell, TableHead } from "../components/ui/table";
@@ -65,14 +66,20 @@ export function Storage({ state }: { state: ViewState }) {
       </Panel>
       <Panel title="Protection">
         {protection?.has_job === false ? <Notice tone="warning" message="No backup schedule was detected." /> : null}
+        {protection?.coverage_complete === false ? <Notice tone="warning" message="Some Proxmox backup schedules could not be read." /> : null}
         {protection?.rows.length ? (
           <>
+            <p className="meta">Schedules come from Proxmox. An available archive does not confirm a tested restore.</p>
             <div className="table-scroll visual-desktop">
               <Table aria-label="Storage protection">
-                <thead><tr><TableHead>Where</TableHead><TableHead>Backup</TableHead><TableHead>Snapshot</TableHead><TableHead>Copy</TableHead></tr></thead>
+                <thead><tr><TableHead>Where</TableHead><TableHead>Backup</TableHead><TableHead>Next run</TableHead><TableHead>Latest available archive</TableHead></tr></thead>
                 <tbody>
                   {protection.rows.map((row) => (
-                    <tr key={`${row.id}-${row.name}`}><TableCell>{row.name}</TableCell><TableCell>{row.backup}</TableCell><TableCell>{row.snapshot}</TableCell><TableCell>{row.copy || "—"}</TableCell></tr>
+                    <tr key={`${row.id}-${row.name}`}>
+                      <TableCell><strong>{row.name}</strong>{row.copy ? <div className="meta">{row.copy}</div> : null}</TableCell>
+                      <TableCell>{row.backup}{row.backup_exclusions ? <div className="meta">Some volumes excluded</div> : null}</TableCell>
+                      <TableCell><BackupSchedule row={row} /></TableCell><TableCell><BackupArchive row={row} /></TableCell>
+                    </tr>
                   ))}
                 </tbody>
               </Table>
@@ -80,7 +87,12 @@ export function Storage({ state }: { state: ViewState }) {
             <div className="visual-mobile"><div className="table-stack">
               {protection.rows.map((row) => (
                 <Disclosure key={`${row.id}-${row.name}`} label={<span className="record-summary"><strong>{row.name}</strong><Badge value={row.backup} /></span>}>
-                  <dl className="fact-list"><div><dt>Snapshot</dt><dd>{row.snapshot}</dd></div><div><dt>Copy</dt><dd>{row.copy || "—"}</dd></div></dl>
+                  {row.id ? <dl className="fact-list">
+                    <div><dt>Next run</dt><dd><BackupSchedule row={row} /></dd></div>
+                    <div><dt>Latest available archive</dt><dd><BackupArchive row={row} /></dd></div>
+                  </dl> : null}
+                  {row.backup_exclusions ? <p className="meta">Some volumes are excluded from the schedule.</p> : null}
+                  {row.copy ? <p className="meta">{row.copy}</p> : null}
                 </Disclosure>
               ))}
             </div></div>

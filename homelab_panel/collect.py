@@ -39,6 +39,8 @@ _SERVICE_CACHE_SECONDS = 60
 _GUEST_TIMEOUT = 4
 _CALENDAR_CACHE = {}
 _CALENDAR_CACHE_SECONDS = 60
+_BACKUP_CACHE = None
+_BACKUP_CACHE_SECONDS = 60
 _CALENDAR_UNITS = (
     "homelab-scan.timer",
     "homelab-update.timer",
@@ -94,7 +96,7 @@ def collect_snapshot(config, runner=run, reader=read_text, note=None):
         "guests": read_guests(config, runner, reader),
         "mounts": read_mounts(reader),
         "storages": parse_pvesm(*_storage_reading(runner, note)),
-        "vzdump_text": reader(config.get("vzdump_cron") or "/etc/pve/vzdump.cron"),
+        "backups": read_backups(runner),
         "uptime_seconds": read_uptime(reader),
         "multicast_snooping": read_multicast(reader),
         "kuma": read_kuma(config, runner),
@@ -108,6 +110,70 @@ def collect_snapshot(config, runner=run, reader=read_text, note=None):
     }
     snapshot["render"] = read_render(config, runner, snapshot["guests"])
     return snapshot
+
+
+def read_backups(runner=run):
+    global _BACKUP_CACHE
+    now = time.monotonic()
+    if runner is run and _BACKUP_CACHE and now - _BACKUP_CACHE[0] < _BACKUP_CACHE_SECONDS:
+        return _BACKUP_CACHE[1]
+
+    def get(path, *args):
+        try:
+            return json.loads(runner(["pvesh", "get", path, *args, "--output-format", "json"]) or "null")
+        except (TypeError, ValueError):
+            return None
+
+    jobs = get("/cluster/backup")
+    complete = isinstance(jobs, list)
+    coverage = []
+    for job in jobs if complete else []:
+        if not isinstance(job, dict):
+            complete = False
+            continue
+        job_id = job.get("id")
+        if not isinstance(job_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", job_id):
+            complete = False
+            continue
+        resolved = get(f"/cluster/backup/{job_id}/included_volumes")
+        guests = resolved.get("children") if isinstance(resolved, dict) else None
+        if not isinstance(guests, list):
+            complete = False
+            continue
+        coverage.append({"enabled": job.get("enabled", 1) in (1, "1"), "next_run": job.get("next-run"),
+                         "storage": job.get("storage"), "guests": guests})
+
+    stores = get("/cluster/resources", "--type", "storage")
+    archives_complete = isinstance(stores, list)
+    archives = []
+    read_shared = set()
+    for store in stores if archives_complete else []:
+        if not isinstance(store, dict) or "backup" not in str(store.get("content") or "").split(","):
+            continue
+        node, name = str(store.get("node") or ""), str(store.get("storage") or "")
+        shared = store.get("shared") in (1, "1")
+        if shared and name in read_shared:
+            continue
+        if not all(re.fullmatch(r"[A-Za-z0-9_.-]+", value) for value in (node, name)):
+            archives_complete = False
+            continue
+        if store.get("status") != "available":
+            archives_complete = False
+            continue
+        items = get(f"/nodes/{node}/storage/{name}/content", "--content", "backup")
+        if not isinstance(items, list):
+            archives_complete = False
+            continue
+        if shared:
+            read_shared.add(name)
+        archives.extend({"storage": name, "vmid": item.get("vmid"), "ctime": item.get("ctime")}
+                        for item in items if isinstance(item, dict))
+
+    result = {"coverage": coverage, "complete": complete, "archives": archives,
+              "archives_complete": archives_complete}
+    if runner is run:
+        _BACKUP_CACHE = (now, result)
+    return result
 
 
 def read_guests(config, runner=run, reader=read_text):

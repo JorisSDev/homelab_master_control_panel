@@ -626,6 +626,15 @@ describe("master panel", () => {
     expect(copied).toContain("6.0 Gb/s");
     expect(copied).toMatch(/Bus errors<\/dt><dd class="num">2<\/dd>/);
     expect(copied).toContain("fstab waits for the disk.");
+    const backups = page("/storage", { ...fixture, protection: { has_job: true, coverage_complete: false, rows: [
+      { id: "201", name: "media", backup: "Scheduled", snapshot: "None", copy: "", backup_exclusions: true,
+        next_backup: 1800000000, backup_destinations: ["vault"], latest_backup: { at: 1790000000, storage: "vault" }, archives_complete: false },
+      { id: "208", name: "requests", backup: "Schedule unknown", snapshot: "None", copy: "", archives_complete: true },
+    ] } });
+    expect(backups).toContain("Some volumes excluded");
+    expect(backups).toContain("Partial listing");
+    expect(backups).toContain("Schedule unknown");
+    expect(backups).toContain("No archive found");
     const system = page("/system");
     expect(system).toContain("Install this version");
     expect(system).toContain("Sign out");

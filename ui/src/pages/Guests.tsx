@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, ChevronUp, ExternalLink, GripVertical, Search, Server } from "lucide-react";
+import { BackupArchive, BackupSchedule } from "../components/BackupEvidence";
 import { Badge, Confirm, Empty, Notice, Page, RouteLink } from "../components/Chrome";
 import { machinePackageStatus } from "../components/PatchStatus";
 import { Button } from "../components/ui/button";
@@ -239,7 +240,12 @@ function Dossier({ row, state }: { row: ServiceRow; state: ViewState }) {
           <h3>Maintenance and protection</h3>
           <dl className="fact-list">
             {update ? <div><dt>Package check</dt><dd>{machinePackageStatus(row, state.guest_updates, update).label}{update.floating ? " · Floating image tag" : ""}{update.reboot ? " · Reboot requested" : ""}</dd></div> : null}
-            {protection ? <div><dt>Protection</dt><dd>Backup {protection.backup}. Snapshot {protection.snapshot}.{protection.copy ? ` ${protection.copy}` : ""}</dd></div> : null}
+            {protection ? <>
+              <div><dt>Backup</dt><dd>{protection.backup}{protection.backup_exclusions ? " · Some volumes excluded" : ""}</dd></div>
+              {protection.backup === "Scheduled" ? <div><dt>Next backup</dt><dd><BackupSchedule row={protection} /></dd></div> : null}
+              <div><dt>Latest available archive</dt><dd><BackupArchive row={protection} /></dd></div>
+              {protection.copy ? <div><dt>Copy</dt><dd>{protection.copy}</dd></div> : null}
+            </> : null}
             {plex ? <div><dt>Application</dt><dd>Plex {plex.version || "version unknown"}{plex.claimed === "1" ? ", claimed" : plex.claimed ? ", not claimed" : ""}. Render device {plex.render}.</dd></div> : null}
           </dl>
         </section>

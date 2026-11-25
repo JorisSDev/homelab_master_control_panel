@@ -305,9 +305,23 @@ export type DasState = {
   match: string;
 };
 
+export type ProtectionRow = {
+  name: string;
+  id: string;
+  backup: string;
+  snapshot: string;
+  copy: string;
+  next_backup?: number | null;
+  backup_destinations?: string[];
+  latest_backup?: { at: number; storage: string } | null;
+  archives_complete?: boolean;
+  backup_exclusions?: boolean;
+};
+
 export type ProtectionState = {
-  has_job: boolean;
-  rows: { name: string; id: string; backup: string; snapshot: string; copy: string }[];
+  has_job: boolean | null;
+  coverage_complete?: boolean;
+  rows: ProtectionRow[];
 };
 
 export type ScanMeaning = {
