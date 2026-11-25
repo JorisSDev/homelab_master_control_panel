@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { Badge, Confirm, Empty, Page } from "../components/Chrome";
 import { Button } from "../components/ui/button";
+import { Card } from "../components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
+import { Input } from "../components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
+import { Table, TableCell, TableHead } from "../components/ui/table";
+import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import { postJson } from "../lib";
 import type { CalendarRule, ViewState } from "../types";
 
@@ -13,13 +19,13 @@ export function Jobs({
   path: string;
   onState: (next: ViewState) => void;
 }) {
-  const scan = path === "/jobs/scan" || path === "/jobs";
-  const update = path === "/jobs/update" || path === "/jobs";
   return (
     <Page title="Jobs" context="Scheduled work, and the meaning of the last result.">
-      {path === "/jobs" ? <Month state={state} onState={onState} /> : null}
-      {scan ? <ScanDossier state={state} /> : null}
-      {update ? <UpdateDossier state={state} onState={onState} /> : null}
+      <Month state={state} onState={onState} />
+      <div className="mt-6 grid items-start gap-4 lg:grid-cols-2">
+        <ScanCard state={state} open={path === "/jobs/scan"} />
+        <UpdateCard state={state} onState={onState} open={path === "/jobs/update"} />
+      </div>
     </Page>
   );
 }
@@ -38,7 +44,14 @@ const MONTHS = [
   "November",
   "December",
 ];
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+type Pending =
+  | { action: "skip"; weekday: number }
+  | { action: "restore" }
+  | { action: "move"; weekday: number; time: string }
+  | { action: "once"; date: string; time: string };
 
 function Month({ state, onState }: { state: ViewState; onState: (next: ViewState) => void }) {
   const rules = state.calendar?.rules || [];
@@ -47,62 +60,289 @@ function Month({ state, onState }: { state: ViewState; onState: (next: ViewState
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() };
   });
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const today = new Date();
+
+  async function apply(action: Pending) {
+    setBusy(true);
+    setMessage("");
+    const body =
+      action.action === "skip"
+        ? { confirm: true, action: "skip", weekday: action.weekday }
+        : action.action === "restore"
+          ? { confirm: true, action: "restore" }
+          : action.action === "move"
+            ? { confirm: true, action: "move", weekday: action.weekday, time: action.time }
+            : { confirm: true, action: "once", date: action.date, time: action.time };
+    const result = await postJson("/api/jobs/update/schedule", body);
+    setBusy(false);
+    setPending(null);
+    if (!result.ok) {
+      setMessage(String(result.data.error || "The schedule was not changed."));
+      return;
+    }
+    const response = await fetch("/api/state", { cache: "no-store" });
+    if (response.ok) {
+      onState((await response.json()) as ViewState);
+    }
+    setMessage(action.action === "once" ? "The extra run was scheduled." : action.action === "restore" ? "The update is back on." : "The Sunday update was rescheduled.");
+  }
+
   if (rules.length === 0) {
     return (
       <>
         <Empty>No house jobs were read.</Empty>
         {standing.map((line) => (
-          <p key={line} className="standing">
-            {line}
-          </p>
+          <p key={line}>{line}</p>
         ))}
+        {pending ? <ScheduleConfirm pending={pending} busy={busy} onCancel={() => setPending(null)} onConfirm={() => void apply(pending)} /> : null}
       </>
     );
   }
-  const cells = monthCells(cursor.year, cursor.month, rules, state.schedule);
-  const legend = dailyLegend(rules);
+
+  const cells = monthCells(cursor.year, cursor.month, today);
   return (
     <div className="calendar">
-      <div className="calendar-nav">
-        <Button type="button" variant="outline" onClick={() => setCursor((current) => shiftMonth(current, -1))}>
-          Previous month
-        </Button>
-        <p className="calendar-title">
-          {MONTHS[cursor.month]} {cursor.year}
-        </p>
-        <Button type="button" variant="outline" onClick={() => setCursor((current) => shiftMonth(current, 1))}>
-          Next month
-        </Button>
-      </div>
-      {legend ? <p className="calendar-legend">{legend}</p> : null}
-      <div className="calendar-grid" role="grid" aria-label={`${MONTHS[cursor.month]} ${cursor.year}`}>
-        {WEEKDAYS.map((name) => (
-          <div key={name} className="calendar-dow" role="columnheader">
-            {name}
+      {message ? <p className={message.endsWith(".") && !message.includes("not") ? "ok" : "bad"}>{message}</p> : null}
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_15rem]">
+        <div>
+          <div className="calendar-nav">
+            <Button type="button" variant="outline" onClick={() => setCursor((current) => shiftMonth(current, -1))}>
+              Previous month
+            </Button>
+            <p className="calendar-title">
+              {MONTHS[cursor.month]} {cursor.year}
+            </p>
+            <Button type="button" variant="outline" onClick={() => setCursor((current) => shiftMonth(current, 1))}>
+              Next month
+            </Button>
           </div>
-        ))}
-        {cells.map((cell) => (
-          <div
-            key={cell.key}
-            role="gridcell"
-            className={["day", cell.outside ? "outside" : "", cell.today ? "is-today" : ""].filter(Boolean).join(" ")}
-            aria-current={cell.today ? "date" : undefined}
-          >
-            <span className="num">{cell.day}</span>
-            {cell.jobs.map((job) => (
-              <span key={job} className="day-job">
-                {job}
-              </span>
+          <div className="calendar-grid" role="grid" aria-label={`${MONTHS[cursor.month]} ${cursor.year}`}>
+            {WEEKDAY_SHORT.map((name) => (
+              <div key={name} className="calendar-dow" role="columnheader">
+                {name}
+              </div>
             ))}
+            {cells.map((cell) => {
+              const marks = dayMarks(cell.date, rules, state.schedule);
+              return (
+                <div key={cell.key} className="contents">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        role="gridcell"
+                        className={["day", cell.outside ? "outside" : "", cell.today ? "is-today" : ""].filter(Boolean).join(" ")}
+                        aria-current={cell.today ? "date" : undefined}
+                        aria-label={dayLabel(cell.date, marks)}
+                      >
+                        <span className="num">{cell.day}</span>
+                        {marks.map((mark) => (
+                          <span key={mark} className={mark === "Skipped" ? "day-job skipped" : "day-job"}>
+                            {mark}
+                          </span>
+                        ))}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent>
+                      <DayPanel date={cell.date} rules={rules} schedule={state.schedule} today={today} busy={busy} onPending={setPending} />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              );
+            })}
           </div>
-        ))}
+        </div>
+        <aside data-rail className="grid content-start gap-3 border border-[var(--line)] bg-[var(--paper)] p-4">
+          {rules
+            .filter((rule) => rule.label !== "Update")
+            .map((rule) => (
+              <div key={`${rule.label}-${rule.time}`}>
+                <p>{rule.label}</p>
+                <p className="meta">
+                  {cadence(rule)} · {when(rule)}
+                </p>
+              </div>
+            ))}
+          {standing.map((line) => (
+            <p key={line} className="meta">
+              {line}
+            </p>
+          ))}
+        </aside>
       </div>
-      <ScheduleForm state={state} onState={onState} />
-      {standing.map((line) => (
-        <p key={line} className="standing">
-          {line}
+      {pending ? <ScheduleConfirm pending={pending} busy={busy} onCancel={() => setPending(null)} onConfirm={() => void apply(pending)} /> : null}
+    </div>
+  );
+}
+
+function ScheduleConfirm({
+  pending,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  pending: Pending;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (pending.action === "skip") {
+    const day = WEEKDAY_NAMES[pending.weekday] || "Sunday";
+    return (
+      <Confirm title={`Skip the next ${day}`} confirmLabel="Skip this one" busy={busy} onCancel={onCancel} onConfirm={onConfirm}>
+        <p>The coming {day} update will not run. The week after returns to the normal time.</p>
+      </Confirm>
+    );
+  }
+  if (pending.action === "restore") {
+    return (
+      <Confirm title="Put the update back" confirmLabel="Put it back" busy={busy} onCancel={onCancel} onConfirm={onConfirm}>
+        <p>The coming update will run again.</p>
+      </Confirm>
+    );
+  }
+  if (pending.action === "move") {
+    return (
+      <Confirm title="Move the weekly update" confirmLabel="Move weekly time" busy={busy} onCancel={onCancel} onConfirm={onConfirm}>
+        <p>
+          This changes the weekly update to {WEEKDAY_NAMES[pending.weekday]} at {pending.time}. Other jobs stay where they are.
         </p>
-      ))}
+      </Confirm>
+    );
+  }
+  return (
+    <Confirm title="Schedule one update" confirmLabel="Schedule one run" busy={busy} onCancel={onCancel} onConfirm={onConfirm}>
+      <p>
+        This starts the update on {pending.date} at {pending.time}. It restarts playback, recreates Compose services, and has no vzdump rollback.
+      </p>
+    </Confirm>
+  );
+}
+
+function DayPanel({
+  date,
+  rules,
+  schedule,
+  today,
+  busy,
+  onPending,
+}: {
+  date: Date;
+  rules: CalendarRule[];
+  schedule: ViewState["schedule"];
+  today: Date;
+  busy: boolean;
+  onPending: (pending: Pending) => void;
+}) {
+  const key = dateKey(date);
+  const weekly = updateRule(rules);
+  const past = startOf(date) < startOf(today);
+  const onWeekly = weekly !== null && weekdayIndex(date) === weekly.weekday;
+  const nextKey = weekly ? dateKey(nextWeekly(weekly.weekday, today)) : "";
+  const skipped = schedule?.skip === key;
+  const onceHere = schedule?.once === key;
+  return (
+    <div className="grid gap-3">
+      <p className="font-semibold">
+        {WEEKDAY_NAMES[weekdayIndex(date)]} {date.getDate()} {MONTHS[date.getMonth()]}
+      </p>
+      {past ? <p>This day has passed.</p> : null}
+      {!past && skipped ? (
+        <div className="grid gap-2">
+          <p>This update is skipped. The week after returns to the normal time.</p>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => onPending({ action: "restore" })}>
+            Put it back
+          </Button>
+        </div>
+      ) : null}
+      {!past && onceHere && onWeekly ? <p>An extra update is also set for {schedule?.once_time}.</p> : null}
+      {!past && !skipped && onWeekly && weekly ? (
+        <WeeklyEditor
+          weekday={weekly.weekday}
+          time={weekly.time}
+          canSkip={key === nextKey}
+          busy={busy}
+          onSkip={() => onPending({ action: "skip", weekday: weekly.weekday })}
+          onMove={(weekday, time) => onPending({ action: "move", weekday, time })}
+        />
+      ) : null}
+      {!past && !onWeekly && onceHere ? <p>An extra update is set for {schedule?.once_time}.</p> : null}
+      {!past && !onWeekly && !onceHere && schedule?.once ? (
+        <p>
+          An extra update is already set for {schedule.once}
+          {schedule.once_time ? ` at ${schedule.once_time}` : ""}.
+        </p>
+      ) : null}
+      {!past && !onWeekly && !onceHere && !schedule?.once ? <OnceEditor date={key} busy={busy} onOnce={(time) => onPending({ action: "once", date: key, time })} /> : null}
+    </div>
+  );
+}
+
+function WeeklyEditor({
+  weekday,
+  time,
+  canSkip,
+  busy,
+  onSkip,
+  onMove,
+}: {
+  weekday: number;
+  time: string;
+  canSkip: boolean;
+  busy: boolean;
+  onSkip: () => void;
+  onMove: (weekday: number, time: string) => void;
+}) {
+  const [day, setDay] = useState(String(weekday));
+  const [clock, setClock] = useState(time);
+  const dirty = Number(day) !== weekday || clock !== time;
+  return (
+    <div className="grid gap-3">
+      <p>
+        Repeats every {WEEKDAY_NAMES[weekday]} at {time}.
+      </p>
+      <ToggleGroup type="single" value={day} onValueChange={(value) => { if (value) setDay(value); }} aria-label="Weekly day" className="flex-wrap">
+        {WEEKDAY_SHORT.map((name, index) => (
+          <ToggleGroupItem key={name} value={String(index)} aria-label={WEEKDAY_NAMES[index]}>
+            {name}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      <label className="grid gap-1">
+        Time
+        <Input type="time" value={clock} onChange={(event) => setClock(event.target.value)} />
+      </label>
+      <div className="flex flex-wrap gap-2">
+        {canSkip ? (
+          <Button type="button" variant="outline" disabled={busy} onClick={onSkip}>
+            Skip this one
+          </Button>
+        ) : null}
+        {dirty ? (
+          <Button type="button" disabled={busy || !clock} onClick={() => onMove(Number(day), clock)}>
+            Save
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function OnceEditor({ date, busy, onOnce }: { date: string; busy: boolean; onOnce: (time: string) => void }) {
+  const [clock, setClock] = useState("06:00");
+  return (
+    <div className="grid gap-3">
+      <p>Run the update once on {date}. The weekly update stays where it is.</p>
+      <label className="grid gap-1">
+        Time
+        <Input type="time" value={clock} onChange={(event) => setClock(event.target.value)} />
+      </label>
+      <Button type="button" disabled={busy || !clock} onClick={() => onOnce(clock)}>
+        Schedule one run
+      </Button>
     </div>
   );
 }
@@ -112,51 +352,73 @@ function shiftMonth(current: { year: number; month: number }, delta: number) {
   return { year: next.getFullYear(), month: next.getMonth() };
 }
 
-function monthCells(year: number, month: number, rules: CalendarRule[], schedule?: ViewState["schedule"]) {
+function monthCells(year: number, month: number, today: Date) {
   const first = new Date(year, month, 1);
-  const lead = (first.getDay() + 6) % 7;
+  const lead = weekdayIndex(first);
   const start = new Date(year, month, 1 - lead);
   const last = new Date(year, month + 1, 0);
-  const trail = 6 - ((last.getDay() + 6) % 7);
+  const trail = 6 - weekdayIndex(last);
   const total = lead + last.getDate() + trail;
-  const today = new Date();
-  const cells: { key: string; day: number; outside: boolean; today: boolean; jobs: string[] }[] = [];
+  const cells: { key: string; day: number; date: Date; outside: boolean; today: boolean }[] = [];
   for (let index = 0; index < total; index += 1) {
     const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + index);
     cells.push({
       key: dateKey(date),
       day: date.getDate(),
+      date,
       outside: date.getMonth() !== month,
-      today: date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate(),
-      jobs: markedJobs(dateKey(date), jobsOn(date, rules), schedule),
+      today: dateKey(date) === dateKey(today),
     });
   }
   return cells;
 }
 
-function dailyLegend(rules: CalendarRule[]) {
-  const daily = rules.filter((rule) => !rule.weekdays);
-  if (daily.length === 0) {
-    return "";
+function dayMarks(date: Date, rules: CalendarRule[], schedule: ViewState["schedule"]) {
+  const key = dateKey(date);
+  const weekly = updateRule(rules);
+  const marks: string[] = [];
+  if (schedule?.skip === key) {
+    marks.push("Skipped");
+  } else if (weekly && weekdayIndex(date) === weekly.weekday) {
+    marks.push(weekly.time);
   }
-  return `Every day · ${daily.map((rule) => `${rule.label} ${when(rule)}`).join(" · ")}`;
-}
-
-function markedJobs(key: string, jobs: string[], schedule?: ViewState["schedule"]) {
-  const next = jobs.map((job) => (schedule?.skip === key && job.startsWith("Update") ? "Skipped" : job));
   if (schedule?.once === key && schedule.once_time) {
-    next.push(`Update ${schedule.once_time}`);
+    marks.push(`Once ${schedule.once_time}`);
   }
-  return next;
+  return marks;
 }
 
-function jobsOn(date: Date, rules: CalendarRule[]) {
-  const weekday = (date.getDay() + 6) % 7;
-  return rules
-    .filter((rule) => Array.isArray(rule.weekdays) && rule.weekdays.includes(weekday))
-    .map((rule) => ({ time: rule.time, label: rule.label, until: rule.until }))
-    .sort((left, right) => left.time.localeCompare(right.time) || left.label.localeCompare(right.label))
-    .map((rule) => `${rule.label} ${when(rule)}`);
+function dayLabel(date: Date, marks: string[]) {
+  const label = `${WEEKDAY_NAMES[weekdayIndex(date)]} ${date.getDate()} ${MONTHS[date.getMonth()]}`;
+  return marks.length ? `${label}, ${marks.join(", ")}` : label;
+}
+
+function updateRule(rules: CalendarRule[]) {
+  const rule = rules.find((item) => item.label === "Update" && Array.isArray(item.weekdays) && item.weekdays.length > 0);
+  if (!rule || !rule.weekdays) {
+    return null;
+  }
+  return { weekday: rule.weekdays[0], time: rule.time };
+}
+
+function weekdayIndex(date: Date) {
+  return (date.getDay() + 6) % 7;
+}
+
+function startOf(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function nextWeekly(weekday: number, today: Date) {
+  const delta = (weekday - weekdayIndex(today) + 7) % 7;
+  return new Date(today.getFullYear(), today.getMonth(), today.getDate() + delta);
+}
+
+function cadence(rule: CalendarRule) {
+  if (!rule.weekdays || rule.weekdays.length === 0) {
+    return "Every day";
+  }
+  return rule.weekdays.map((day) => WEEKDAY_NAMES[day] || "").filter(Boolean).join(", ");
 }
 
 function when(rule: { time: string; until?: string }) {
@@ -169,146 +431,7 @@ function dateKey(date: Date) {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-
-function ScheduleForm({ state, onState }: { state: ViewState; onState: (next: ViewState) => void }) {
-  const weekly = state.schedule?.weekly;
-  const [weekday, setWeekday] = useState(weekly?.weekday ?? 6);
-  const [time, setTime] = useState(weekly?.time || "06:00");
-  const [date, setDate] = useState("");
-  const [onceTime, setOnceTime] = useState("06:00");
-  const [pending, setPending] = useState<"skip" | "move" | "once" | "">("");
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function apply() {
-    setBusy(true);
-    setMessage("");
-    const body =
-      pending === "skip"
-        ? { confirm: true, action: "skip", weekday: 6 }
-        : pending === "move"
-          ? { confirm: true, action: "move", weekday, time }
-          : { confirm: true, action: "once", date, time: onceTime };
-    const result = await postJson("/api/jobs/update/schedule", body);
-    setBusy(false);
-    setPending("");
-    if (!result.ok) {
-      setMessage(String(result.data.error || "The schedule was not changed."));
-      return;
-    }
-    const response = await fetch("/api/state", { cache: "no-store" });
-    if (response.ok) {
-      onState((await response.json()) as ViewState);
-    }
-    setMessage(pending === "once" ? "The extra run was scheduled." : "The Sunday update was rescheduled.");
-  }
-
-  return (
-    <div className="schedule">
-      <p className="section-label">Sunday update</p>
-      {message ? <p className={message.endsWith(".") && !message.includes("not") ? "ok" : "bad"}>{message}</p> : null}
-      <div className="row-actions">
-        <Button type="button" variant="outline" disabled={busy} onClick={() => setPending("skip")}>
-          Skip next Sunday
-        </Button>
-      </div>
-      <div className="schedule-row">
-        <label>
-          Weekly day
-          <select value={weekday} onChange={(event) => setWeekday(Number(event.target.value))}>
-            {WEEKDAY_NAMES.map((name, index) => (
-              <option key={name} value={index}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Weekly time
-          <input type="time" value={time} onChange={(event) => setTime(event.target.value)} />
-        </label>
-        <Button type="button" variant="outline" disabled={busy} onClick={() => setPending("move")}>
-          Move weekly time
-        </Button>
-      </div>
-      <div className="schedule-row">
-        <label>
-          Extra date
-          <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
-        </label>
-        <label>
-          Extra time
-          <input type="time" value={onceTime} onChange={(event) => setOnceTime(event.target.value)} />
-        </label>
-        <Button type="button" variant="outline" disabled={busy || !date} onClick={() => setPending("once")}>
-          Schedule one run
-        </Button>
-      </div>
-      {pending === "skip" ? (
-        <Confirm title="Skip the next Sunday" confirmLabel="Skip next Sunday" busy={busy} onCancel={() => setPending("")} onConfirm={() => void apply()}>
-          <p>The coming Sunday update will not run. The week after returns to the normal time.</p>
-        </Confirm>
-      ) : null}
-      {pending === "move" ? (
-        <Confirm title="Move the weekly update" confirmLabel="Move weekly time" busy={busy} onCancel={() => setPending("")} onConfirm={() => void apply()}>
-          <p>
-            This changes the weekly update to {WEEKDAY_NAMES[weekday]} at {time}. Other jobs stay where they are.
-          </p>
-        </Confirm>
-      ) : null}
-      {pending === "once" ? (
-        <Confirm title="Schedule one update" confirmLabel="Schedule one run" busy={busy} onCancel={() => setPending("")} onConfirm={() => void apply()}>
-          <p>
-            This starts the update on {date} at {onceTime}. It restarts playback, recreates Compose services, and has no vzdump rollback.
-          </p>
-        </Confirm>
-      ) : null}
-    </div>
-  );
-}
-
-function guestName(state: ViewState, id: string) {
-  return state.services.rows.find((row) => row.id === id)?.name || id;
-}
-
-function HostPackages({ state }: { state: ViewState }) {
-  const packages = state.packages;
-  if (!packages.checked) {
-    return (
-      <p>
-        Host packages <span>Not checked.</span>
-      </p>
-    );
-  }
-  if (!packages.total) {
-    return <p>Nothing is waiting.</p>;
-  }
-  return (
-    <table>
-      <thead>
-        <tr>
-          <th>Host packages</th>
-          <th className="num">Current</th>
-          <th className="num">Candidate</th>
-          <th>Kind</th>
-        </tr>
-      </thead>
-      <tbody>
-        {packages.upgrades.map((row) => (
-          <tr key={row.name} className={row.security ? "row-security" : "row-candidate"}>
-            <td>{row.name}</td>
-            <td className="num">{row.current}</td>
-            <td className="num">{row.candidate}</td>
-            <td>{row.security ? "Security" : "Other"}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function ScanDossier({ state }: { state: ViewState }) {
+function ScanCard({ state, open }: { state: ViewState; open: boolean }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const meaning = state.scan_meaning;
@@ -323,60 +446,77 @@ function ScanDossier({ state }: { state: ViewState }) {
   }
 
   return (
-    <article className="dossier">
-      <header className="page-head">
+    <Card className="figure grid gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="section-label">Scan</p>
-          <p className="meta">{state.scan.purpose}</p>
+          <p>
+            {state.scan.detail}
+            {state.scan.elapsed ? ` · ${state.scan.elapsed}` : ""}
+          </p>
         </div>
-        <div className="page-action">
-          <Badge value={state.scan.status} />
-          {state.scan.idle ? (
-            <Button type="button" disabled={busy} onClick={() => void run()}>
-              Run the scan
-            </Button>
-          ) : null}
-        </div>
-      </header>
+        <Badge value={state.scan.status} />
+      </div>
+      {state.scan.lock ? <p>{state.scan.lock}</p> : null}
       {message ? <p className={message.startsWith("Starting") ? "ok" : "bad"}>{message}</p> : null}
-      <p>
-        {state.scan.detail}
-        {state.scan.elapsed ? ` · ${state.scan.elapsed}` : ""}
-      </p>
-      {state.scan.timeline.length > 0 ? (
-        <ol className="timeline">
-          {state.scan.timeline.map((step) => (
-            <li key={step.text} className={step.current ? "step-current" : ""}>
-              {step.current ? <span>Now</span> : null}
-              {step.text}
-            </li>
+      {state.scan.idle ? (
+        <Button type="button" disabled={busy} onClick={() => void run()}>
+          Run the scan
+        </Button>
+      ) : (
+        <Timeline steps={state.scan.timeline} />
+      )}
+      <Collapsible defaultOpen={open}>
+        <CollapsibleTrigger asChild>
+          <Button type="button" variant="outline">
+            Details
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-3 grid gap-3">
+          {state.scan.purpose ? <p>{state.scan.purpose}</p> : null}
+          {state.scan.idle ? <Timeline steps={state.scan.timeline} /> : null}
+          {meaning && meaning.coverage.length > 0 ? (
+            <ul>
+              {meaning.coverage.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          ) : null}
+          {meaning?.signature ? <p>{meaning.signature}</p> : null}
+          {plex ? (
+            <p>
+              Plex {plex.version || "version unknown"}
+              {plex.claimed === "1" ? ", claimed" : plex.claimed ? ", not claimed" : ""}. Render device {plex.render}.
+            </p>
+          ) : null}
+          {(meaning?.streaks || []).map((streak) => (
+            <p key={streak.text}>
+              {streak.text} · {streak.count} times
+            </p>
           ))}
-        </ol>
-      ) : null}
-      {meaning && meaning.coverage.length > 0 ? (
-        <ul>
-          {meaning.coverage.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      ) : null}
-      {meaning?.signature ? <p>{meaning.signature}</p> : null}
-      {plex ? (
-        <p>
-          Plex {plex.version || "version unknown"}
-          {plex.claimed === "1" ? ", claimed" : plex.claimed ? ", not claimed" : ""}. Render device {plex.render}.
-        </p>
-      ) : null}
-      {(meaning?.streaks || []).map((streak) => (
-        <p key={streak.text}>
-          {streak.text} · {streak.count} times
-        </p>
-      ))}
-    </article>
+        </CollapsibleContent>
+      </Collapsible>
+    </Card>
   );
 }
 
-function UpdateDossier({ state, onState }: { state: ViewState; onState: (next: ViewState) => void }) {
+function Timeline({ steps }: { steps: ViewState["scan"]["timeline"] }) {
+  if (steps.length === 0) {
+    return null;
+  }
+  return (
+    <ol className="timeline">
+      {steps.map((step) => (
+        <li key={step.text} className={step.current ? "step-current" : ""}>
+          {step.current ? <span>Now</span> : null}
+          {step.text}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function UpdateCard({ state, onState, open }: { state: ViewState; onState: (next: ViewState) => void; open: boolean }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState("");
   const [confirm, setConfirm] = useState(false);
@@ -411,84 +551,135 @@ function UpdateDossier({ state, onState }: { state: ViewState; onState: (next: V
   }
 
   return (
-    <article className="dossier">
-      <header className="page-head">
+    <Card className="figure grid gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="section-label">Sunday update</p>
-          <p className="meta">Next run {state.update.next}</p>
+          <p>Next run {state.update.next}</p>
+          <p className="meta">Host packages</p>
+          <p>{waitingLine(state)}</p>
         </div>
-        <div className="page-action">
-          <Badge value={state.update.status} />
-          <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => void check()}>
-            Check for updates
-          </Button>
-          <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => setDry(true)}>
-            Dry run
-          </Button>
-          {state.update.idle ? (
-            <Button type="button" disabled={busy !== ""} onClick={() => setConfirm(true)}>
-              Update all
-            </Button>
-          ) : null}
-        </div>
-      </header>
+        <Badge value={state.update.status} />
+      </div>
       {message ? <p className={message.startsWith("Starting") || message.startsWith("Checked") ? "ok" : "bad"}>{message}</p> : null}
       <p>
         {state.update.detail}
         {state.update.elapsed ? ` · ${state.update.elapsed}` : ""}
       </p>
       {state.guest_updates.active ? <p>{guestName(state, state.guest_updates.active)} is updating</p> : null}
-      {(state.update.history[0]?.steps || []).map((step) => (
-        <p key={step}>{step}</p>
-      ))}
-      <HostPackages state={state} />
-      {rows.length === 0 ? <Empty>No guest update check has been saved.</Empty> : null}
-      {rows.length > 0 ? (
-        <table>
-          <thead>
-            <tr>
-              <th>Guest</th>
-              <th className="num">Packages</th>
-              <th className="num">Security</th>
-              <th>Compose</th>
-              <th>Reboot</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id}>
-                <td>{row.id}</td>
-                <td className="num">{row.packages}</td>
-                <td className="num">{row.security}</td>
-                <td>{row.compose.join(", ") || (row.floating ? "floating tag" : "—")}</td>
-                <td>{row.reboot ? "wanted" : "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => void check()}>
+          Check for updates
+        </Button>
+        <Button type="button" variant="outline" disabled={busy !== ""} onClick={() => setDry(true)}>
+          Dry run
+        </Button>
+        {state.update.idle ? (
+          <Button type="button" disabled={busy !== ""} onClick={() => setConfirm(true)}>
+            Update all
+          </Button>
+        ) : null}
+      </div>
+      <Collapsible defaultOpen={open}>
+        <CollapsibleTrigger asChild>
+          <Button type="button" variant="outline">
+            Details
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-3 grid gap-3">
+          <HostPackages state={state} />
+          {(state.update.history[0]?.steps || []).map((step) => (
+            <p key={step}>{step}</p>
+          ))}
+          {rows.length > 0 ? (
+            <Table>
+              <thead>
+                <tr>
+                  <TableHead>Guest</TableHead>
+                  <TableHead className="num">Packages</TableHead>
+                  <TableHead className="num">Security</TableHead>
+                  <TableHead>Compose</TableHead>
+                  <TableHead>Reboot</TableHead>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.id}>
+                    <TableCell>{row.id}</TableCell>
+                    <TableCell className="num">{row.packages}</TableCell>
+                    <TableCell className="num">{row.security}</TableCell>
+                    <TableCell>{row.compose.join(", ") || (row.floating ? "floating tag" : "—")}</TableCell>
+                    <TableCell>{row.reboot ? "wanted" : "—"}</TableCell>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          ) : null}
+        </CollapsibleContent>
+      </Collapsible>
       {confirm ? (
-        <Confirm
-          title="Start the update"
-          confirmLabel="Start the update"
-          busy={busy !== ""}
-          onCancel={() => setConfirm(false)}
-          onConfirm={() => void start("update")}
-        >
+        <Confirm title="Start the update" confirmLabel="Start the update" busy={busy !== ""} onCancel={() => setConfirm(false)} onConfirm={() => void start("update")}>
           <p>This restarts playback, recreates Compose services, and has no vzdump rollback.</p>
         </Confirm>
       ) : null}
       {dry ? (
-        <Confirm
-          title="Start the dry run"
-          confirmLabel="Start the dry run"
-          busy={busy !== ""}
-          onCancel={() => setDry(false)}
-          onConfirm={() => void start("dry")}
-        >
+        <Confirm title="Start the dry run" confirmLabel="Start the dry run" busy={busy !== ""} onCancel={() => setDry(false)} onConfirm={() => void start("dry")}>
           <p>This previews the Sunday update and does not install packages.</p>
         </Confirm>
       ) : null}
-    </article>
+    </Card>
+  );
+}
+
+function waitingLine(state: ViewState) {
+  const packages = state.packages;
+  const guests = state.guest_updates.rows.filter((row) => row.packages > 0 || row.security > 0 || row.compose.length > 0 || row.floating || row.reboot).length;
+  if (!packages.checked && !state.guest_updates.checked) {
+    return "Not checked.";
+  }
+  if ((packages.total || 0) === 0 && guests === 0) {
+    return "Nothing is waiting.";
+  }
+  const parts: string[] = [];
+  if (packages.checked) {
+    parts.push(`${packages.total ?? 0} host packages`);
+    parts.push(`${packages.security ?? 0} security`);
+  }
+  if (guests > 0) {
+    parts.push(`${guests} ${guests === 1 ? "guest" : "guests"} waiting`);
+  }
+  return parts.join(" · ");
+}
+
+function guestName(state: ViewState, id: string) {
+  return state.services.rows.find((row) => row.id === id)?.name || id;
+}
+
+function HostPackages({ state }: { state: ViewState }) {
+  const packages = state.packages;
+  if (!packages.checked || !packages.total) {
+    return null;
+  }
+  return (
+    <Table>
+      <thead>
+        <tr>
+          <TableHead>Host packages</TableHead>
+          <TableHead className="num">Current</TableHead>
+          <TableHead className="num">Candidate</TableHead>
+          <TableHead>Kind</TableHead>
+        </tr>
+      </thead>
+      <tbody>
+        {packages.upgrades.map((row) => (
+          <tr key={row.name} className={row.security ? "row-security" : "row-candidate"}>
+            <TableCell>{row.name}</TableCell>
+            <TableCell className="num">{row.current}</TableCell>
+            <TableCell className="num">{row.candidate}</TableCell>
+            <TableCell>{row.security ? "Security" : "Other"}</TableCell>
+          </tr>
+        ))}
+      </tbody>
+    </Table>
   );
 }

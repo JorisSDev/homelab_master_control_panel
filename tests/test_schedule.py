@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from homelab_panel.schedule import (
@@ -116,6 +116,35 @@ class ScheduleTests(unittest.TestCase):
                 runner,
                 root=root,
                 today=date(2026, 11, 25),
+                executable="/usr/bin/python3",
+                program="/opt/homelab-panel/current/homelab-panel.pyz",
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(len(calls), before)
+
+            status, result = apply_schedule(
+                config,
+                "restore",
+                {},
+                runner,
+                root=root,
+                today=date(2026, 11, 25),
+                executable="/usr/bin/python3",
+                program="/opt/homelab-panel/current/homelab-panel.pyz",
+            )
+            self.assertEqual(status, 202)
+            self.assertEqual(result["skip"], "")
+            self.assertTrue(update_due(config, date(2026, 11, 29)))
+
+            before = len(calls)
+            status, _ = apply_schedule(
+                config,
+                "once",
+                {"date": "2026-11-25", "time": "01:00"},
+                runner,
+                root=root,
+                today=date(2026, 11, 25),
+                now=datetime(2026, 11, 25, 12, 0),
                 executable="/usr/bin/python3",
                 program="/opt/homelab-panel/current/homelab-panel.pyz",
             )

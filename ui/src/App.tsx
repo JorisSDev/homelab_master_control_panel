@@ -104,7 +104,8 @@ export function App({ initial = null, live = true, initialPath = "/" }: Props) {
                 go(href);
               }}
             >
-              {label}
+              <span>{label}</span>
+              {href === "/" && needsYou(state) ? <span className="ml-auto size-1.5 rounded-full bg-[var(--attention)]" role="status" aria-label="Needs you" /> : null}
             </a>
           ))}
         </nav>
@@ -135,6 +136,13 @@ function Gate() {
   }
 
   return <Login error={error} busy={busy} onSubmit={(password, remember) => void onSubmit(password, remember)} />;
+}
+
+function needsYou(state: ViewState) {
+  if (state.attention) {
+    return state.attention.length > 0;
+  }
+  return state.findings.items.length > 0;
 }
 
 function current(path: string, href: string) {

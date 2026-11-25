@@ -1,7 +1,10 @@
 import type { ReactNode } from "react";
+import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { Progress } from "./ui/progress";
+
+export { Badge };
 
 export function Page({
   title,
@@ -25,23 +28,6 @@ export function Page({
       </header>
       {children}
     </section>
-  );
-}
-
-export function Badge({ value }: { value: string }) {
-  const tone = value.toLowerCase();
-  const kind = tone.includes("down") || tone.includes("stop") || tone === "low" || tone.includes("different")
-    ? "down"
-    : tone.includes("attention") || tone.includes("drift") || tone === "unknown"
-      ? "attention"
-      : tone.includes("run")
-        ? "running"
-        : "up";
-  return (
-    <span className={`status tone-${kind}`}>
-      <span className="status-mark" aria-hidden="true" />
-      {value}
-    </span>
   );
 }
 

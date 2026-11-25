@@ -257,9 +257,10 @@ def read_mounts(reader=read_text, disk=shutil.disk_usage):
 
 
 def read_host(reader=read_text):
+    cores = _core_count(reader("/proc/cpuinfo"))
     meminfo = reader("/proc/meminfo")
     if not meminfo.strip():
-        return {"load": "", "memory_used": 0, "memory_total": 0, "disk_free": 0, "disk_total": 0}
+        return {"load": "", "cores": cores, "memory_used": 0, "memory_total": 0, "disk_free": 0, "disk_total": 0}
     load_text = reader("/proc/loadavg")
     load_parts = load_text.split()
     load = load_parts[0] if load_parts else ""
@@ -280,11 +281,16 @@ def read_host(reader=read_text):
         usage = None
     return {
         "load": load,
+        "cores": cores,
         "memory_used": used,
         "memory_total": total,
         "disk_free": 0 if usage is None else usage.free,
         "disk_total": 0 if usage is None else usage.total,
     }
+
+
+def _core_count(text):
+    return sum(1 for line in (text or "").splitlines() if line.lower().startswith("processor"))
 
 
 def _service(runner, unit):

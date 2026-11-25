@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Button } from "./ui/button";
+import { Card } from "./ui/card";
+import { Input } from "./ui/input";
 import { Logo } from "./Logo";
 
 export function Login({
@@ -18,6 +20,7 @@ export function Login({
       <Logo />
       <h1>Master control panel</h1>
       <p className="quiet">Sign in to see the host and start a job.</p>
+      <Card className="w-full">
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -28,7 +31,7 @@ export function Login({
       >
         <label>
           Password
-          <input
+          <Input
             type="password"
             name="password"
             autoComplete="current-password"
@@ -44,6 +47,7 @@ export function Login({
           Sign in
         </Button>
       </form>
+      </Card>
       {error ? <p className="bad">{error}</p> : null}
     </main>
   );

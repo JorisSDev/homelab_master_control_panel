@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { Empty, Page } from "../components/Chrome";
 import { Button } from "../components/ui/button";
+import { Card } from "../components/ui/card";
+import { Input } from "../components/ui/input";
 import { postJson } from "../lib";
 import type { ViewState } from "../types";
 
@@ -86,25 +88,27 @@ export function SystemPage({ state }: { state: ViewState }) {
           Install this version
         </Button>
       ) : null}
+      <Card className="figure">
       <p className="section-label">Password</p>
       <form className="password-form" onSubmit={(event) => void changePassword(event)}>
         <label>
           Current password
-          <input type="password" name="current" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
+          <Input type="password" name="current" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
         </label>
         <label>
           New password
-          <input type="password" name="new" autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} />
+          <Input type="password" name="new" autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} />
         </label>
         <label>
           Confirm password
-          <input type="password" name="confirm" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} />
+          <Input type="password" name="confirm" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} />
         </label>
         <Button type="submit" disabled={passwordBusy || !current || !next || !confirm}>
           Change password
         </Button>
       </form>
       {passwordMessage ? <p className={passwordMessage.startsWith("The password was changed") ? "ok" : "bad"}>{passwordMessage}</p> : null}
+      </Card>
       <p className="section-label">Operator log</p>
       {(state.operator || []).length === 0 ? <Empty>No panel actions have been recorded.</Empty> : null}
       <ul>

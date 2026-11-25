@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from homelab_panel.store import state_dir
@@ -170,7 +170,17 @@ def _write(path, text):
     os.replace(temporary, path)
 
 
-def apply_schedule(config, action, fields, runner, *, root=None, today=None, executable="/usr/bin/python3", program="/opt/homelab-panel/current/homelab-panel.pyz"):
+def _still_ahead(day, clock, today, now):
+    now = now or datetime.now()
+    if day > today:
+        return True
+    if day < today:
+        return False
+    hour, minute = (int(part) for part in clock.split(":", 1))
+    return (hour, minute) > (now.hour, now.minute)
+
+
+def apply_schedule(config, action, fields, runner, *, root=None, today=None, now=None, executable="/usr/bin/python3", program="/opt/homelab-panel/current/homelab-panel.pyz"):
     today = today or date.today()
     root = Path("/") if root is None else Path(root)
     if state_dir(config) is None:
@@ -206,7 +216,7 @@ def apply_schedule(config, action, fields, runner, *, root=None, today=None, exe
     if action == "once":
         day = parse_day(str(fields.get("date") or ""))
         clock = parse_time(str(fields.get("time") or ""))
-        if day is None or clock is None or day < today:
+        if day is None or clock is None or not _still_ahead(day, clock, today, now):
             return 400, {"error": "The schedule was not accepted."}
         command = once_command(f"{day.isoformat()} {clock}:00")
         if command is None or runner(command) != 0:
@@ -215,4 +225,9 @@ def apply_schedule(config, action, fields, runner, *, root=None, today=None, exe
         stored["once_time"] = clock
         save_schedule(config, stored)
         return 202, {"once": day.isoformat(), "once_time": clock}
+    if action == "restore":
+        stored.pop("skip", None)
+        if not save_schedule(config, stored):
+            return 400, {"error": "The schedule cannot be saved."}
+        return 202, {"skip": ""}
     return 400, {"error": "The schedule was not accepted."}

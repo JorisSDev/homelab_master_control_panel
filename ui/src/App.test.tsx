@@ -154,6 +154,7 @@ describe("master panel", () => {
       chronology: [{ text: "qmcreate 116 OK", href: "/guests/116" }],
       figures: {
         load: "1.20",
+        cores: 4,
         memory_used: "8.0 GB",
         memory_total: "15.3 GB",
         memory_assigned: "20.5 GB",
@@ -182,13 +183,19 @@ describe("master panel", () => {
     expect(html).toContain("Sunday update");
     expect(html).toContain("Sun 04 Jan 06:00");
     expect(html).toContain("Proxmox package refresh");
-    expect(html).toContain("Last minute");
+    expect(html).toContain("30%");
+    expect(html).toContain("Load 1.20 on 4 cores");
+    expect(html).toContain("Internal");
+    expect(html).toContain("External");
     expect(html).toContain("20.0 / 32.0 GB");
     expect(html).toContain(">free<");
     expect(html).toContain("100.0 / 200.0 GB");
-    expect(html).toContain("20.5 / 15.3 GB");
-    expect(html).toContain("assigned on this host");
+    expect(html).toContain("8.0 / 15.3 GB");
+    expect(html).toContain("in use");
+    expect(html).toContain("20.5 GB assigned");
     expect(html).toContain("Overcommitted");
+    expect(html).toContain("1 running");
+    expect(html).not.toContain("Last minute");
     expect(html).not.toContain("Log rotate");
     expect(html).not.toContain("qmcreate");
     expect(html).not.toContain("assigned of");
@@ -395,17 +402,22 @@ describe("master panel", () => {
     expect(html).toContain("Previous month");
     expect(html).toContain("Next month");
     expect(html).toContain("is-today");
-    expect(html).toContain("Every day · Scan 04:00 · Proxmox 01:00–06:00");
-    const cells = html.slice(html.indexOf("calendar-grid"));
-    expect(cells).toContain("Update 06:00");
-    expect(cells).not.toContain("Scan 04:00");
+    const cells = html.slice(html.indexOf("calendar-grid"), html.indexOf("data-rail"));
+    expect(cells).toContain("<button");
+    expect(cells).toContain("06:00");
+    expect(cells).not.toContain("Scan");
     expect(cells).not.toContain("Proxmox");
+    expect(html).toContain("Every day");
+    expect(html).toContain("Scan");
+    expect(html).toContain("04:00");
+    expect(html).toContain("Proxmox");
+    expect(html).toContain("01:00–06:00");
     expect(html).toContain("Disk check runs every two minutes.");
     expect(html).not.toContain("Log rotate");
     expect(html).not.toContain("systemd tmpfiles");
-    expect(html).toContain("Skip next Sunday");
-    expect(html).toContain("Move weekly time");
-    expect(html).toContain("Schedule one run");
+    expect(html).not.toContain("Skip next Sunday");
+    expect(html).not.toContain("Move weekly time");
+    expect(html).not.toContain("Schedule one run");
     expect(html).not.toContain("The coming Sunday update will not run");
     expect(html).not.toContain("Start the update");
     expect(html).not.toContain("restarts playback");
@@ -484,7 +496,7 @@ describe("master panel", () => {
     const storage = page("/storage");
     expect(storage).toContain("Run disk check");
     expect(storage).toContain("Nothing is backed up. There is no backup job, and no machine has a second copy.");
-    expect(storage).not.toContain("<th>Where</th>");
+    expect(storage).not.toContain(">Where<");
     expect(storage).toContain("20.0 / 32.0 GB");
     expect(storage).toContain(">free<");
     const copied = page("/storage", {
@@ -506,7 +518,8 @@ describe("master panel", () => {
       },
     });
     expect(copied).toContain("Photos live on the shelf.");
-    expect(copied).toContain("<th>Where</th>");
+    expect(copied).toContain(">Where<");
+    expect(copied).toContain("External storage");
     expect(copied).toContain("The shelf is mounted.");
     expect(copied).toContain("6.0 Gb/s");
     expect(copied).toContain("2 bus errors.");

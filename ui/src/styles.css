@@ -690,6 +690,31 @@ th.num {
   padding: 0 0.3rem;
 }
 
+button.day {
+  width: 100%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+button.day:hover {
+  background: rgba(243, 239, 230, 0.08);
+}
+
+.day-job.skipped {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.house-line {
+  margin: 0.2rem 0 0.8rem;
+  font-size: var(--title);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
 .schedule {
   display: grid;
   gap: 0.75rem;

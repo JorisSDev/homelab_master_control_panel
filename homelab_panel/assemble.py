@@ -83,6 +83,7 @@ def _figures(state, snapshot, config):
     das = next((row for row in state["storage"]["rows"] if row["label"] == mount), None)
     return {
         "load": (state.get("health") or {}).get("load") or "",
+        "cores": (state.get("health") or {}).get("cores") or 0,
         "memory_used": (state.get("health") or {}).get("memory_used") or "",
         "memory_total": (state.get("health") or {}).get("memory_total") or "",
         "memory_assigned": _size(assigned),

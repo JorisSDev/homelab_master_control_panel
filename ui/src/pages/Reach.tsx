@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Badge, Empty, Page } from "../components/Chrome";
 import { Button } from "../components/ui/button";
+import { Card } from "../components/ui/card";
+import { Table, TableCell, TableHead } from "../components/ui/table";
 import { postJson } from "../lib";
 import type { ViewState } from "../types";
 
@@ -50,30 +52,35 @@ export function Reach({ state, onState }: { state: ViewState; onState: (next: Vi
       {!reach ? <Empty>Reach has not been read.</Empty> : null}
       {reach ? (
         <div className="pinned">
-          <p className="section-label">Network</p>
-          <p>
-            Tunnel {reach.tunnel.guest || "not configured"}
-            {reach.tunnel.connections === null ? "" : ` · ${reach.tunnel.connections} connections`}
-            {reach.tunnel.detail ? ` · ${reach.tunnel.detail}` : ""}
-          </p>
-          <p>
-            WAN port {reach.wan.port || "not configured"}
-            {reach.wan.guest ? ` on guest ${reach.wan.guest}` : ""}
-            {reach.wan.listening === null ? "" : reach.wan.listening ? " · listening" : " · not listening"}
-          </p>
-          <p>
-            DNS pins: {reach.pins.summary}
-            {reach.pins.checked && reach.pins.rows.some((row) => !row.ok)
-              ? `. ${reach.pins.rows
-                  .filter((row) => !row.ok)
-                  .map((row) => row.name)
-                  .join(", ")}`
-              : ""}
-          </p>
-          <p>
-            Multicast snooping{" "}
-            {reach.multicast_snooping === null ? "was not read" : reach.multicast_snooping ? "is on" : "is off"}
-          </p>
+          <Card className="figure">
+            <p className="section-label">Network</p>
+            <dl className="mt-3 grid grid-cols-[9rem_minmax(0,1fr)] gap-y-2">
+              <dt>Tunnel</dt>
+              <dd>
+                {reach.tunnel.guest || "not configured"}
+                {reach.tunnel.connections === null ? "" : ` · ${reach.tunnel.connections} connections`}
+                {reach.tunnel.detail ? ` · ${reach.tunnel.detail}` : ""}
+              </dd>
+              <dt>WAN</dt>
+              <dd>
+                port {reach.wan.port || "not configured"}
+                {reach.wan.guest ? ` on guest ${reach.wan.guest}` : ""}
+                {reach.wan.listening === null ? "" : reach.wan.listening ? " · listening" : " · not listening"}
+              </dd>
+              <dt>DNS pins</dt>
+              <dd>
+                {reach.pins.summary}
+                {reach.pins.checked && reach.pins.rows.some((row) => !row.ok)
+                  ? `. ${reach.pins.rows
+                      .filter((row) => !row.ok)
+                      .map((row) => row.name)
+                      .join(", ")}`
+                  : ""}
+              </dd>
+              <dt>Multicast snooping</dt>
+              <dd>{reach.multicast_snooping === null ? "was not read" : reach.multicast_snooping ? "is on" : "is off"}</dd>
+            </dl>
+          </Card>
           {reach.monitors.error ? <p className="quiet">{reach.monitors.error}</p> : null}
           {kumaHref ? (
             <p>
@@ -86,32 +93,32 @@ export function Reach({ state, onState }: { state: ViewState; onState: (next: Vi
             <>
               <p className="section-label">Monitors</p>
               <p className="meta">Last down is within 30 days.</p>
-              <table>
+              <Table>
               <thead>
                 <tr>
-                  <th>Service</th>
-                  <th>LAN</th>
-                  <th>Status</th>
-                  <th className="num">24h</th>
-                  <th className="num">7d</th>
-                  <th className="num">Last down</th>
+                  <TableHead>Service</TableHead>
+                  <TableHead>LAN</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="num">24h</TableHead>
+                  <TableHead className="num">7d</TableHead>
+                  <TableHead className="num">Last down</TableHead>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.name}>
-                    <td>{row.name}</td>
-                    <td>{lanOf(reach.paths, row.name)}</td>
-                    <td>
+                    <TableCell>{row.name}</TableCell>
+                    <TableCell>{lanOf(reach.paths, row.name)}</TableCell>
+                    <TableCell>
                       <Badge value={row.status} />
-                    </td>
-                    <td className="num">{percent(row.uptime_24h)}</td>
-                    <td className="num">{percent(row.uptime_7d)}</td>
-                    <td className="num">{lastDown(row.last_down)}</td>
+                    </TableCell>
+                    <TableCell className="num">{percent(row.uptime_24h)}</TableCell>
+                    <TableCell className="num">{percent(row.uptime_7d)}</TableCell>
+                    <TableCell className="num">{lastDown(row.last_down)}</TableCell>
                   </tr>
                 ))}
               </tbody>
-              </table>
+              </Table>
             </>
           ) : null}
         </div>

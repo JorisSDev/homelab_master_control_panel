@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Badge, Meter, Page } from "../components/Chrome";
 import { Button } from "../components/ui/button";
+import { Card } from "../components/ui/card";
+import { Progress } from "../components/ui/progress";
 import { awayLines, digestOf } from "../lib";
 import type { AttentionItem, ViewState } from "../types";
 
@@ -20,6 +22,14 @@ export function Overview({
   const running = !state.scan.idle ? state.scan : !state.update.idle ? state.update : null;
   const runningHref = !state.scan.idle ? "/jobs/scan" : "/jobs/update";
   const offerRecovery = typeof state.uptime_seconds === "number" && state.uptime_seconds < 1800;
+  const machines = state.services.rows;
+  const up = machines.filter((row) => row.status === "Running").length;
+  const stopped = machines.filter((row) => row.status === "Stopped").length;
+  const counts = stopped > 0 ? `${up} running, ${stopped} stopped` : `${up} running`;
+  const house = attention.length === 0 ? `${counts}. The house is clear.` : `${counts}. ${attention.length} ${attention.length === 1 ? "needs" : "need"} you.`;
+  const monitors = state.reach?.monitors.rows ?? [];
+  const monitorUp = monitors.filter((row) => row.status === "up").length;
+  const monitorDown = monitors.filter((row) => row.status === "down").length;
 
   return (
     <Page
@@ -43,10 +53,8 @@ export function Overview({
           </Button>
         </div>
       ) : null}
-      <p className="section-label">Attention</p>
-      {attention.length === 0 ? (
-        <p>The house is clear.</p>
-      ) : (
+      <p className="house-line">{house}</p>
+      {attention.length > 0 ? (
         <ul className="attention">
           {attention.map((item) => (
             <li key={`${item.href}-${item.text}`}>
@@ -63,40 +71,81 @@ export function Overview({
             </li>
           ))}
         </ul>
-      )}
-      <p className="section-label">Host</p>
+      ) : null}
       <div className="figures">
-        <div className="figure">
-          <span className="section-label">Load</span>
-          <strong className="figure-value num">{figures?.load || state.health.load || "Unknown"}</strong>
-          <span className="meta">Last minute</span>
-        </div>
-        <Memory assigned={figures?.memory_assigned || ""} total={figures?.memory_total || state.health.memory_total} used={state.health.memory_used} />
-        <Space label="Root" free={figures?.root_free || state.health.disk_free} total={figures?.root_total || state.health.disk_total} />
-        <Space label="Disk shelf" free={shelfFree(state)} total={shelfTotal(state)} />
+        <Processor load={figures?.load || state.health.load || ""} cores={figures?.cores || state.health.cores || 0} />
+        <Memory
+          used={figures?.memory_used || state.health.memory_used}
+          total={figures?.memory_total || state.health.memory_total}
+          assigned={figures?.memory_assigned || ""}
+        />
+        <Space label="Internal" free={figures?.root_free || state.health.disk_free} total={figures?.root_total || state.health.disk_total} />
+        <Space label="External" free={shelfFree(state)} total={shelfTotal(state)} />
       </div>
-      <div className="strip coming">
-        <p className="section-label">Coming up</p>
-        {coming.length === 0 ? (
-          <p className="quiet">No house jobs were read.</p>
-        ) : (
-          <ol className="sequence">
-            {coming.map((item) => (
-              <li key={item.name}>
-                <a
-                  href="/jobs"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    go("/jobs");
-                  }}
-                >
-                  <span>{item.name}</span>
-                  <span className="num">{item.next}</span>
-                </a>
-              </li>
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(16rem,0.8fr)]">
+        <Card className="figure">
+          <p className="section-label">Machines</p>
+          {machines.length === 0 ? <p className="quiet">No machines were read.</p> : null}
+          <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-2">
+            {machines.map((row) => (
+              <a
+                key={row.id}
+                className="inline-flex min-w-0 items-center gap-2 border border-[var(--line)] px-2 py-2"
+                href={`/guests/${row.id}`}
+                aria-label={`${row.name}, ${row.status}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  go(`/guests/${row.id}`);
+                }}
+              >
+                <span className={`status tone-${markTone(row.status)}`} aria-hidden="true">
+                  <span className="status-mark" />
+                </span>
+                <span className="truncate">{row.name}</span>
+              </a>
             ))}
-          </ol>
-        )}
+          </div>
+        </Card>
+        <div className="grid gap-4">
+          {monitors.length > 0 ? (
+            <Card className="figure">
+              <p className="section-label">Reach</p>
+              <a
+                className="text-link"
+                href="/reach"
+                onClick={(event) => {
+                  event.preventDefault();
+                  go("/reach");
+                }}
+              >
+                {monitorUp} up, {monitorDown} down
+              </a>
+            </Card>
+          ) : null}
+          <div className="strip coming">
+            <p className="section-label">Coming up</p>
+            {coming.length === 0 ? (
+              <p className="quiet">No house jobs were read.</p>
+            ) : (
+              <ol className="sequence">
+                {coming.map((item) => (
+                  <li key={item.name}>
+                    <a
+                      href="/jobs"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        go("/jobs");
+                      }}
+                    >
+                      <span>{item.name}</span>
+                      <span className="num">{item.next}</span>
+                    </a>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </div>
       </div>
       {running ? (
         <p>
@@ -127,6 +176,29 @@ export function Overview({
         </p>
       ) : null}
     </Page>
+  );
+}
+
+function markTone(status: string) {
+  if (status === "Stopped") {
+    return "down";
+  }
+  if (status === "Running") {
+    return "up";
+  }
+  return "attention";
+}
+
+function Processor({ load, cores }: { load: string; cores: number }) {
+  const value = Number(load);
+  const share = Number.isFinite(value) && cores > 0 ? Math.round((value / cores) * 100) : null;
+  return (
+    <Card className="figure">
+      <span className="section-label">Processor</span>
+      <strong className="figure-value num">{share === null ? load || "Unknown" : `${share}%`}</strong>
+      <span className="meta">{share === null ? "1-minute load average" : `Load ${load} on ${cores} ${cores === 1 ? "core" : "cores"}`}</span>
+      <Progress value={share === null ? 0 : Math.min(100, share)} low={share !== null && share >= 100} />
+    </Card>
   );
 }
 
@@ -185,42 +257,37 @@ function shelfRow(state: ViewState) {
 function Space({ label, free, total }: { label: string; free: string; total: string }) {
   if (free && total) {
     return (
-      <div className="figure">
+      <Card className="figure">
         <Meter label={label} free={free} total={total} caption="free" />
-      </div>
+      </Card>
     );
   }
   return (
-    <div className="figure">
-      <span>{label}</span>
-      <strong className="num">{free ? `${free} free` : "Unknown"}</strong>
-    </div>
+    <Card className="figure">
+      <span className="section-label">{label}</span>
+      <strong className="figure-value num">{free ? `${free} free` : "Not mounted"}</strong>
+    </Card>
   );
 }
 
-function Memory({ assigned, total, used }: { assigned: string; total: string; used: string }) {
-  const assignedN = amount(assigned);
+function Memory({ used, total, assigned }: { used: string; total: string; assigned: string }) {
+  const usedN = amount(used);
   const totalN = amount(total);
-  if (assigned && total && assignedN !== null && totalN !== null && totalN > 0) {
-    const over = assignedN > totalN;
+  const assignedN = amount(assigned);
+  if (used && total && usedN !== null && totalN !== null && totalN > 0) {
+    const over = assignedN !== null && assignedN > totalN;
     return (
-      <div className="figure">
-        <Meter
-          label="Memory"
-          free={assigned}
-          total={total}
-          percent={(assignedN / totalN) * 100}
-          caption={`assigned on this host${over ? ". Overcommitted" : ""}`}
-        />
-      </div>
+      <Card className="figure">
+        <Meter label="Memory" free={used} total={total} percent={(usedN / totalN) * 100} caption="in use" />
+        {assigned ? <span className="meta">{assigned} assigned{over ? " · Overcommitted" : ""}</span> : null}
+      </Card>
     );
   }
-  const value = assigned ? `${assigned} assigned` : used && total ? `${used} of ${total}` : "Unknown";
   return (
-    <div className="figure">
-      <span>Memory</span>
-      <strong className="num">{value}</strong>
-    </div>
+    <Card className="figure">
+      <span className="section-label">Memory</span>
+      <strong className="figure-value num">{used && total ? `${used} of ${total}` : "Unknown"}</strong>
+    </Card>
   );
 }
 

@@ -126,6 +126,7 @@ export type ViewState = {
     status: string;
     summary: string;
     load: string;
+    cores?: number;
     memory_used: string;
     memory_total: string;
     disk_free: string;
@@ -181,6 +182,7 @@ export type AttentionItem = { severity: string; text: string; href: string };
 
 export type Figures = {
   load: string;
+  cores?: number;
   memory_used: string;
   memory_total: string;
   memory_assigned: string;

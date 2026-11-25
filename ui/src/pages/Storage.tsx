@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Meter, Page } from "../components/Chrome";
 import { Button } from "../components/ui/button";
+import { Card } from "../components/ui/card";
+import { Table, TableCell, TableHead } from "../components/ui/table";
 import { postJson } from "../lib";
 import type { ProtectionState, ViewState } from "../types";
 
@@ -31,11 +33,11 @@ export function Storage({ state }: { state: ViewState }) {
       {message ? <p className={message.startsWith("Starting") ? "ok" : "bad"}>{message}</p> : null}
       <div className="meters">
         {state.storage.rows.map((row) => (
-          <Meter key={`${row.kind}-${row.label}`} label={row.label} free={row.free} total={row.total} low={row.low} />
+          <Meter key={`${row.kind}-${row.label}`} label={storageName(row.label, state.figures?.das_label)} free={row.free} total={row.total} low={row.low} />
         ))}
       </div>
-      <article className="dossier">
-        <p className="section-label">Disk shelf</p>
+      <Card className="figure">
+        <p className="section-label">External storage</p>
         <p>{das?.summary || "The disk shelf has not been read."}</p>
         {das?.speeds?.length ? <p>{das.speeds.join(", ")}</p> : null}
         {das?.faults ? <p>{das.faults} bus errors.</p> : null}
@@ -51,30 +53,30 @@ export function Storage({ state }: { state: ViewState }) {
             ))}
           </ul>
         ) : null}
-      </article>
+      </Card>
       <p className="section-label">Protection</p>
       {hasProtection(protection) ? (
         <>
-          <table>
+          <Table>
             <thead>
               <tr>
-                <th>Where</th>
-                <th>Backup</th>
-                <th>Snapshot</th>
-                <th>Copy</th>
+                <TableHead>Where</TableHead>
+                <TableHead>Backup</TableHead>
+                <TableHead>Snapshot</TableHead>
+                <TableHead>Copy</TableHead>
               </tr>
             </thead>
             <tbody>
               {(protection?.rows || []).map((row) => (
                 <tr key={`${row.id}-${row.name}`}>
-                  <td>{row.name}</td>
-                  <td>{row.backup}</td>
-                  <td>{row.snapshot}</td>
-                  <td>{row.copy || "—"}</td>
+                  <TableCell>{row.name}</TableCell>
+                  <TableCell>{row.backup}</TableCell>
+                  <TableCell>{row.snapshot}</TableCell>
+                  <TableCell>{row.copy || "—"}</TableCell>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
           {protection?.has_job ? null : <p>There is no backup job.</p>}
         </>
       ) : (
@@ -82,6 +84,16 @@ export function Storage({ state }: { state: ViewState }) {
       )}
     </Page>
   );
+}
+
+function storageName(label: string, shelf: string | undefined) {
+  if (label === "/") {
+    return "Internal";
+  }
+  if (shelf && label === shelf) {
+    return "External";
+  }
+  return label;
 }
 
 function hasProtection(protection: ProtectionState | undefined) {

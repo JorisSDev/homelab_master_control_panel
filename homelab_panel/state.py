@@ -313,6 +313,8 @@ def _service_names(value):
 def _health(snapshot, schedule):
     host = snapshot.get("host") or {}
     load = str(host.get("load") or "")
+    raw_cores = host.get("cores")
+    cores = raw_cores if type(raw_cores) is int and raw_cores > 0 else 0
     memory_used = _size(host.get("memory_used"))
     memory_total = _size(host.get("memory_total"))
     disk_free = _size(host.get("disk_free"))
@@ -340,6 +342,7 @@ def _health(snapshot, schedule):
         "status": status,
         "summary": summary,
         "load": load,
+        "cores": cores,
         "memory_used": memory_used,
         "memory_total": memory_total,
         "disk_free": disk_free,

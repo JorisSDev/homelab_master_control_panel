@@ -285,6 +285,26 @@ class StateTests(unittest.TestCase):
         self.assertIn("Load 0.40", state["health"]["summary"])
         self.assertIn("8.0 GB", state["health"]["summary"])
         self.assertEqual(state["health"]["disk_free"], "20.0 GB")
+        self.assertEqual(state["health"]["cores"], 0)
+
+    def test_host_core_count_comes_from_cpuinfo(self):
+        from homelab_panel.collect import read_host
+
+        def reader(path):
+            if path == "/proc/cpuinfo":
+                return "processor\t: 0\n\nprocessor\t: 1\n"
+            if path == "/proc/meminfo":
+                return "MemTotal: 2048 kB\nMemAvailable: 1024 kB\n"
+            if path == "/proc/loadavg":
+                return "0.50 0.40 0.30 1/2 9\n"
+            return ""
+
+        host = read_host(reader)
+        self.assertEqual(host["cores"], 2)
+        self.assertEqual(host["load"], "0.50")
+        counted = build_state(CONFIG, snapshot(host=host))
+        self.assertEqual(counted["health"]["cores"], 2)
+        self.assertEqual(counted["figures"]["cores"], 2)
 
     def test_low_disk_is_called_out(self):
         state = build_state(
