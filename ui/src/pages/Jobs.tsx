@@ -1,6 +1,7 @@
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Badge, Confirm, Empty, Notice, Page } from "../components/Chrome";
+import { ContainerPatchDetails, patchStatusOf } from "../components/PatchStatus";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
@@ -565,7 +566,7 @@ function UpdateCard({ state, onState, open }: { state: ViewState; onState: (next
   const [dry, setDry] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(open);
   useEffect(() => { if (open) setDetailsOpen(true); }, [open]);
-  const rows = state.guest_updates.rows;
+  const patch = patchStatusOf(state);
 
   async function check() {
     setBusy("check");
@@ -573,8 +574,11 @@ function UpdateCard({ state, onState, open }: { state: ViewState; onState: (next
     const host = await postJson("/api/packages/check");
     const guests = await postJson("/api/guests/check");
     setBusy("");
-    const ok = host.ok && guests.ok;
-    setMessage({ ok, text: ok ? "Checked for updates." : String(guests.data.error || host.data.error || "The check did not finish.") });
+    const rows = guests.data.rows;
+    const partial = Array.isArray(rows) && rows.some((row) => row?.error);
+    const ok = host.ok && guests.ok && host.data.checked !== false && guests.data.checked !== false
+      && !host.data.error && !guests.data.error && !partial;
+    setMessage({ ok, text: ok ? "Package results refreshed." : String(guests.data.error || host.data.error || "Some package checks did not finish. See Details for results.") });
     if (host.ok || guests.ok) {
       const snapshot = await readSnapshot();
       if (snapshot) onState(snapshot);
@@ -596,7 +600,7 @@ function UpdateCard({ state, onState, open }: { state: ViewState; onState: (next
       <div className="section-heading"><h2 className="section-title">Sunday update</h2><Badge value={state.update.status} /></div>
       <div className="job-summary">
         <div><span className="meta">Next run</span><strong className="num">{state.update.next}</strong></div>
-        <div><span className="meta">Host packages</span><strong>{waitingLine(state)}</strong></div>
+        <div><span className="meta">Host packages</span><strong>{patch.host}</strong></div>
       </div>
       {message ? <Notice tone={message.ok ? "success" : "error"} message={message.text} /> : null}
       <p className="job-description">{state.update.detail}{state.update.elapsed ? ` · ${state.update.elapsed}` : ""}</p>
@@ -613,34 +617,25 @@ function UpdateCard({ state, onState, open }: { state: ViewState; onState: (next
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent className="job-details">
+          <h3>Application versions</h3>
+          <p className={patch.plex?.version_status === "below" ? "patch-review" : undefined}>{patch.application}</p>
+          {patch.plex?.version || patch.plex?.minimum ? (
+            <dl className="fact-list">
+              <div><dt>Running Plex version</dt><dd className="technical">{patch.plex.version || "Unavailable"}</dd></div>
+              <div><dt>Configured minimum</dt><dd className="technical">{patch.plex.minimum || "Not set"}</dd></div>
+            </dl>
+          ) : null}
+          <p className="meta">Package checks use local APT lists and count candidates marked Debian Security. Results have no recorded check time. VM packages, Compose images, and standalone applications have separate update sources.</p>
+          {state.packages.error ? <p className="meta">{state.packages.error}</p> : null}
           <HostPackages state={state} />
+          <h3>Container packages</h3>
+          <p className={patch.containerCounts.security ? "patch-review" : undefined}>{patch.containers}</p>
+          {patch.running > 0 ? <p className="meta">{patch.reported} of {patch.running} running containers reported</p> : null}
+          {state.guest_updates.error ? <p className="meta">{state.guest_updates.error}</p> : null}
+          <ContainerPatchDetails patch={patch} />
           {(state.update.history[0]?.steps || []).map((step, index) => (
             <p key={`${step}-${index}`}>{step}</p>
           ))}
-          {rows.length > 0 ? (
-            <div className="table-scroll"><Table aria-label="Guest updates">
-              <thead>
-                <tr>
-                  <TableHead>Guest</TableHead>
-                  <TableHead className="num">Packages</TableHead>
-                  <TableHead className="num">Security</TableHead>
-                  <TableHead>Compose</TableHead>
-                  <TableHead>Reboot</TableHead>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.id}>
-                    <TableCell>{row.id}</TableCell>
-                    <TableCell className="num">{row.packages}</TableCell>
-                    <TableCell className="num">{row.security}</TableCell>
-                    <TableCell>{row.compose.join(", ") || (row.floating ? "floating tag" : "—")}</TableCell>
-                    <TableCell>{row.reboot ? "wanted" : "—"}</TableCell>
-                  </tr>
-                ))}
-              </tbody>
-            </Table></div>
-          ) : null}
         </CollapsibleContent>
       </Collapsible>
       <RunHistory label="Update history" job={state.update} />
@@ -704,58 +699,49 @@ function RunHistoryEntry({ run }: { run: Run }) {
   );
 }
 
-function waitingLine(state: ViewState) {
-  const packages = state.packages;
-  const guests = state.guest_updates.rows.filter((row) => row.packages > 0 || row.security > 0 || row.compose.length > 0 || row.floating || row.reboot).length;
-  if (packages.error || state.guest_updates.error) {
-    return "Check incomplete.";
-  }
-  if (!packages.checked && !state.guest_updates.checked) {
-    return "Not checked.";
-  }
-  if ((packages.total || 0) === 0 && guests === 0) {
-    return "Nothing is waiting.";
-  }
-  const parts: string[] = [];
-  if (packages.checked) {
-    parts.push(`${packages.total ?? 0} host packages`);
-    parts.push(`${packages.security ?? 0} security`);
-  }
-  if (guests > 0) {
-    parts.push(`${guests} ${guests === 1 ? "guest" : "guests"} waiting`);
-  }
-  return parts.join(" · ");
-}
-
 function guestName(state: ViewState, id: string) {
   return state.services.rows.find((row) => row.id === id)?.name || id;
 }
 
 function HostPackages({ state }: { state: ViewState }) {
   const packages = state.packages;
-  if (!packages.checked || !packages.total) {
+  if (!packages.checked || packages.error || !packages.upgrades.length) {
     return null;
   }
+  const upgrades = [...packages.upgrades].sort((a, b) => Number(b.security) - Number(a.security));
   return (
-    <div className="table-scroll"><Table aria-label="Host packages">
-      <thead>
-        <tr>
-          <TableHead>Host packages</TableHead>
-          <TableHead className="num">Current</TableHead>
-          <TableHead className="num">Candidate</TableHead>
-          <TableHead>Kind</TableHead>
-        </tr>
-      </thead>
-      <tbody>
-        {packages.upgrades.map((row) => (
-          <tr key={row.name} className={row.security ? "row-security" : "row-candidate"}>
-            <TableCell>{row.name}</TableCell>
-            <TableCell className="num">{row.current}</TableCell>
-            <TableCell className="num">{row.candidate}</TableCell>
-            <TableCell>{row.security ? "Security" : "Other"}</TableCell>
+    <div className="host-packages">
+      <div className="table-scroll host-packages-table"><Table aria-label="Host packages">
+        <thead>
+          <tr>
+            <TableHead>Host packages</TableHead>
+            <TableHead className="num">Current</TableHead>
+            <TableHead className="num">Candidate</TableHead>
+            <TableHead>Kind</TableHead>
           </tr>
+        </thead>
+        <tbody>
+          {upgrades.map((row) => (
+            <tr key={row.name} className={row.security ? "row-security" : "row-candidate"}>
+              <TableCell>{row.name}</TableCell>
+              <TableCell className="num">{row.current}</TableCell>
+              <TableCell className="num">{row.candidate}</TableCell>
+              <TableCell>{row.security ? "Security" : "Other"}</TableCell>
+            </tr>
+          ))}
+        </tbody>
+      </Table></div>
+      <ul className="patch-machines host-packages-list" aria-label="Host packages">
+        {upgrades.map((row) => (
+          <li key={row.name}>
+            <div className="patch-machine"><strong>{row.name}</strong><span className={row.security ? "patch-review" : undefined}>{row.security ? "Security" : "Other"}</span></div>
+            <dl className="fact-list">
+              <div><dt>Current</dt><dd className="technical">{row.current}</dd></div>
+              <div><dt>Candidate</dt><dd className="technical">{row.candidate}</dd></div>
+            </dl>
+          </li>
         ))}
-      </tbody>
-    </Table></div>
+      </ul>
+    </div>
   );
 }

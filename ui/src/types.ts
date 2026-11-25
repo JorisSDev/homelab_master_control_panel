@@ -268,6 +268,8 @@ export type ScanMeaning = {
 export type PlexState = {
   id: string;
   version: string;
+  version_status?: "unknown" | "no-minimum" | "below" | "meets";
+  version_configured?: boolean;
   claimed: string;
   minimum: string;
   ok: boolean;

@@ -314,7 +314,7 @@ describe("master panel", () => {
     expect(html).toContain("Update all");
     expect(html).toContain("Check for updates");
     expect(html).toContain("Dry run");
-    expect(html).toContain("Not checked.");
+    expect(html).toContain("Not checked");
     expect(html).toContain("Next run");
     expect(html).toContain("Host packages");
     expect(html).toContain("Guest 201 · Packages");
@@ -334,6 +334,38 @@ describe("master panel", () => {
     });
     expect(updating).toContain("media is updating");
     expect(updating).not.toContain("Start the update");
+  });
+
+  it("shows recorded patch candidates separately from missing coverage", () => {
+    const base = fixture.services.rows[0];
+    const state: ViewState = {
+      ...fixture,
+      services: { ...fixture.services, rows: [
+        ...fixture.services.rows,
+        { ...base, id: "221", name: "Photos" },
+        { ...base, id: "222", name: "New container" },
+      ] },
+      packages: { ...fixture.packages, checked: true, total: 0, security: 0, pending: 0 },
+      guest_updates: { ...fixture.guest_updates, checked: true, rows: [
+        { id: "201", packages: 3, security: 2, error: "", compose: [], floating: false },
+        { id: "221", packages: 0, security: 0, error: "The check did not finish.", compose: [], floating: false },
+      ] },
+      plex: { id: "201", version: "1.2.1", minimum: "1.2.3", version_status: "below", ok: false, claimed: "1", render: "ok" },
+    };
+    const overview = page("/", state);
+    expect(overview).toContain("Patch status");
+    expect(overview).toContain('href="/jobs/update"');
+    expect(overview).toContain("No candidates reported");
+    expect(overview).toContain("2 security · 1 other");
+    expect(overview).toContain("1 of 3 running containers reported");
+    expect(overview).toContain("Plex below minimum");
+    const jobs = page("/jobs/update", state);
+    expect(jobs).toContain("Check incomplete");
+    expect(jobs).toContain("The check did not finish.");
+    expect(jobs).toContain("Outside container check");
+    expect(jobs).toContain("Not checked");
+    expect(jobs).toContain("Configured minimum");
+    expect(jobs).not.toContain("Nothing is waiting");
   });
 
   it("lists every guest and keeps a virtual machine free of an update button", () => {
@@ -442,7 +474,9 @@ describe("master panel", () => {
       ...fixture,
       packages: { ...fixture.packages, checked: true, total: 0, security: 0, pending: 0 },
     };
-    expect(page("/jobs/update", waiting)).toContain("Nothing is waiting.");
+    const emptyResult = page("/jobs/update", waiting);
+    expect(emptyResult).toContain("No candidates reported");
+    expect(emptyResult).toContain("0 of 1 running containers reported");
   });
 
   it("opens jobs on a month calendar and leaves housekeeping off it", () => {
@@ -674,6 +708,9 @@ describe("redesigned workflows", () => {
   it("keeps navigation and reports accessible without dispatching an action", async () => {
     await exercisePanel("/", async (panel, writes) => {
       expect(panel.querySelector('a[href="/api/report"]')?.textContent).toBe("Report");
+      await press(panel.querySelector('a[href="/jobs/update"]'));
+      expect(panel.querySelector('#update-job [aria-label="Machine package coverage"]')).not.toBeNull();
+      expect(writes).toEqual([]);
       await press(control("More", panel));
       const sheet = document.querySelector('[aria-label="More pages"]');
       expect(sheet).not.toBeNull();

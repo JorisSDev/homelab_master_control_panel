@@ -8,6 +8,22 @@ from __future__ import annotations
 
 import re
 
+VERSION = re.compile(r"[0-9]+(?:\.[0-9]+)+(?:-[A-Za-z0-9._-]+)?")
+
+
+def minimum_status(version, minimum):
+    if not VERSION.fullmatch(version):
+        return "unknown"
+    if not minimum:
+        return "no-minimum"
+    if not VERSION.fullmatch(minimum):
+        return "unknown"
+    current, required = version_tuple(version), version_tuple(minimum)
+    width = max(len(current), len(required))
+    current += (0,) * (width - len(current))
+    required += (0,) * (width - len(required))
+    return "below" if current < required else "meets"
+
 
 def version_tuple(value):
     nums = []

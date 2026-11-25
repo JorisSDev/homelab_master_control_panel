@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, ChevronUp, ExternalLink, GripVertical, Search, Server } from "lucide-react";
 import { Badge, Confirm, Empty, Notice, Page, RouteLink } from "../components/Chrome";
+import { machinePackageStatus } from "../components/PatchStatus";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Sheet, SheetContent, SheetTitle } from "../components/ui/sheet";
@@ -237,7 +238,7 @@ function Dossier({ row, state }: { row: ServiceRow; state: ViewState }) {
         <section className="detail-group">
           <h3>Maintenance and protection</h3>
           <dl className="fact-list">
-            {update ? <div><dt>Updates</dt><dd>{update.packages} packages waiting{update.security ? `, ${update.security} security` : ""}{update.floating ? ", floating image tag" : ""}{update.reboot ? ", reboot wanted" : ""}</dd></div> : null}
+            {update ? <div><dt>Package check</dt><dd>{machinePackageStatus(row, state.guest_updates, update).label}{update.floating ? " · Floating image tag" : ""}{update.reboot ? " · Reboot requested" : ""}</dd></div> : null}
             {protection ? <div><dt>Protection</dt><dd>Backup {protection.backup}. Snapshot {protection.snapshot}.{protection.copy ? ` ${protection.copy}` : ""}</dd></div> : null}
             {plex ? <div><dt>Application</dt><dd>Plex {plex.version || "version unknown"}{plex.claimed === "1" ? ", claimed" : plex.claimed ? ", not claimed" : ""}. Render device {plex.render}.</dd></div> : null}
           </dl>

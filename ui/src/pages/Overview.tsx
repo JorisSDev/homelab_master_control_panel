@@ -1,6 +1,7 @@
 import { ArrowDownToLine, ArrowRight, CalendarDays, Check, CircleAlert, CircleHelp, Radio, Server } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge, Empty, Meter, Page, Panel, RouteLink } from "../components/Chrome";
+import { PatchSummary, patchStatusOf } from "../components/PatchStatus";
 import { Button } from "../components/ui/button";
 import { Progress } from "../components/ui/progress";
 import { awayLines, capacityMb, digestOf } from "../lib";
@@ -95,6 +96,10 @@ export function Overview({ state, go, stale }: {
           <CircleAlert aria-hidden="true" /><span>Open the recovery checklist</span><ArrowRight aria-hidden="true" />
         </RouteLink>
       ) : null}
+      <Panel title="Patch status" action={<RouteLink className="section-link" href="/jobs/update" go={go}>View patch details <ArrowRight aria-hidden="true" /></RouteLink>}>
+        <PatchSummary patch={patchStatusOf(state)} />
+        <p className="meta">Package counts are from recorded checks against local APT lists.</p>
+      </Panel>
       <div className="overview-columns">
         <Panel title="Host resources" className="resources-panel">
           <div className="resource-grid">

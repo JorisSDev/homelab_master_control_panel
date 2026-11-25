@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from homelab_panel.identity import parse_identity, version_tuple
+from homelab_panel.identity import minimum_status, parse_identity
 from homelab_panel.parse_logs import parse_runs
 from homelab_panel.schedule import load_schedule, overlay_calendar, public_schedule
 from homelab_panel.signals import blast_lines, house_calendar, signature_age_days, vzdump_has_job
@@ -287,21 +287,21 @@ def _scan_meaning(config, snapshot, state, now):
 def _plex(config, snapshot):
     plex = config.get("plex") or {}
     parsed = parse_identity(snapshot.get("plex_xml") or "")
-    minimum = str(plex.get("minimum_version") or "")
-    version = parsed.get("version") or ""
+    minimum = str(plex.get("minimum_version") or "").strip()
+    version = (parsed.get("version") or "").strip()
     claimed = parsed.get("claimed") or ""
-    meets = True
-    if version and minimum:
-        meets = version_tuple(version) >= version_tuple(minimum)
+    version_status = minimum_status(version, minimum)
     ok = True
     if version or claimed:
-        ok = claimed == "1" and meets
+        ok = claimed == "1" and (not version or not minimum or version_status == "meets")
     render = snapshot.get("render") or "unknown"
     if render == "missing":
         ok = False
     return {
         "id": str(plex.get("guest_id") or ""),
         "version": version,
+        "version_status": version_status,
+        "version_configured": bool(plex.get("identity_url") or minimum or version),
         "claimed": claimed,
         "minimum": minimum,
         "ok": ok,

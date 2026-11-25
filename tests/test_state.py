@@ -215,6 +215,25 @@ class StateTests(unittest.TestCase):
         self.assertEqual(state["guest_updates"]["rows"], [])
         self.assertEqual(state["services"]["status"], "Not reported")
 
+    def test_plex_version_comparison_is_separate_from_identity_and_render_health(self):
+        cases = [
+            ("1.2.2-build", "1.2.3", "below"),
+            ("1.2.3-build", "1.2.3.0", "meets"),
+            ("1.2.10-build", "1.2.3", "meets"),
+            ("1.2.3-build", "", "no-minimum"),
+            ("", "1.2.3", "unknown"),
+            ("not-a-version", "1.2.3", "unknown"),
+        ]
+        for version, minimum, expected in cases:
+            with self.subTest(version=version, minimum=minimum):
+                config = {"plex": {"minimum_version": minimum, "identity_url": "http://10.0.0.20:32400/identity"}}
+                xml = f'<MediaContainer version="{version}" claimed="0" />' if version else ""
+                state = build_state(config, snapshot(plex_xml=xml, render="missing"))
+                self.assertTrue(state["plex"]["version_configured"])
+                self.assertEqual(state["plex"]["version_status"], expected)
+                self.assertFalse(state["plex"]["ok"])
+        self.assertFalse(build_state({}, snapshot(plex_xml=""))["plex"]["version_configured"])
+
     def test_services_link_the_configured_guests(self):
         state = build_state(
             {
