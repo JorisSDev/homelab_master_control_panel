@@ -1,7 +1,11 @@
-import type { ReactNode } from "react";
+import { useRef, type ComponentProps, type ReactNode } from "react";
+import { ChevronDown, CircleAlert, CircleCheck, Info } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { capacityMb } from "../lib";
+import { Alert } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { Progress } from "./ui/progress";
 
 export { Badge };
@@ -11,17 +15,19 @@ export function Page({
   context,
   action,
   children,
+  className,
 }: {
   title: string;
   context?: string;
   action?: ReactNode;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="page">
+    <section className={cn("page", className)}>
       <header className="page-head">
         <div>
-          <h2>{title}</h2>
+          <h1 tabIndex={-1}>{title}</h1>
           {context ? <p className="quiet">{context}</p> : null}
         </div>
         {action ? <div className="page-action">{action}</div> : null}
@@ -31,50 +37,83 @@ export function Page({
   );
 }
 
+export function RouteLink({ go, href = "/", onClick, ...props }: ComponentProps<"a"> & { go: (href: string) => void }) {
+  return (
+    <a
+      {...props}
+      href={href}
+      onClick={(event) => {
+        onClick?.(event);
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        go(href);
+      }}
+    />
+  );
+}
+
+export function Panel({ title, action, children, className }: { title: string; action?: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <section className={cn("surface-card section-panel", className)}>
+      <div className="section-heading"><h2 className="section-title">{title}</h2>{action}</div>
+      {children}
+    </section>
+  );
+}
+
+export function Disclosure({ label, children }: { label: ReactNode; children: ReactNode }) {
+  return (
+    <details className="disclosure">
+      <summary><span>{label}</span><ChevronDown aria-hidden="true" /></summary>
+      <div className="disclosure-body">{children}</div>
+    </details>
+  );
+}
+
+export function Notice({ message, tone = "neutral" }: { message: string; tone?: "neutral" | "warning" | "error" | "success" }) {
+  if (!message) return null;
+  const Icon = tone === "success" ? CircleCheck : tone === "warning" || tone === "error" ? CircleAlert : Info;
+  return <Alert tone={tone}><Icon aria-hidden="true" /><span>{message}</span></Alert>;
+}
+
 export function Meter({
   label,
-  free,
+  used,
+  free = "",
   total,
   low,
-  caption,
-  percent,
+  caption = "used",
 }: {
   label: string;
-  free: string;
+  used?: string;
+  free?: string;
   total: string;
   low?: boolean;
   caption?: string;
-  percent?: number;
 }) {
-  const freeN = parseFloat(free) || 0;
-  const totalN = parseFloat(total) || 0;
-  const used =
-    typeof percent === "number"
-      ? Math.max(0, Math.min(100, percent))
-      : totalN > 0
-        ? Math.max(0, Math.min(100, ((totalN - freeN) / totalN) * 100))
-        : 0;
-  const headline = share(free, total);
+  const totalN = capacityMb(total);
+  const freeN = capacityMb(free);
+  const legacyUsed = totalN !== null && freeN !== null ? Math.max(0, totalN - freeN) : null;
+  const usedN = used ? capacityMb(used) : legacyUsed;
+  const percent = usedN !== null && totalN !== null && totalN > 0 ? Math.min(100, (usedN / totalN) * 100) : null;
+  const amount = used || (usedN === null ? "" : usedN >= 1024 ? `${(usedN / 1024).toFixed(1)} GB` : `${Math.round(usedN)} MB`);
   return (
     <div className="meter">
       <span className="section-label">{label}</span>
-      <strong className="figure-value num">{headline}</strong>
-      <span className="meta">{caption || "free"}</span>
-      <Progress value={used} low={low} />
+      <strong className="figure-value num">{percent !== null ? share(amount, total) : "Unknown"}</strong>
+      {percent !== null ? <><span className="meta">{caption}</span><Progress value={percent} low={low} label={`${label} in use`} /></> : null}
     </div>
   );
 }
 
-function share(free: string, total: string) {
-  const amount = free.trim().match(/^[\d.]+/)?.[0];
-  if (!amount || !total.trim()) {
-    return free || "Unknown";
-  }
-  return `${amount} / ${total.trim()}`;
+function share(used: string, total: string) {
+  const amount = used.trim().match(/^([\d.]+)\s*(\w+)$/);
+  const unit = total.trim().match(/[a-z]+$/i)?.[0].toUpperCase();
+  return `${amount && amount[2].toUpperCase() === unit ? amount[1] : used.trim()} / ${total.trim()}`;
 }
 
 export function Empty({ children }: { children: string }) {
-  return <p className="quiet">{children}</p>;
+  return <p className="empty">{children}</p>;
 }
 
 export function Confirm({
@@ -84,6 +123,8 @@ export function Confirm({
   busy,
   onCancel,
   onConfirm,
+  returnFocus,
+  destructive = false,
 }: {
   title: string;
   children: ReactNode;
@@ -91,18 +132,30 @@ export function Confirm({
   busy?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  returnFocus?: HTMLElement | null;
+  destructive?: boolean;
 }) {
+  const active = useRef(returnFocus ?? (typeof document === "undefined" ? null : document.activeElement));
+  const cancel = useRef<HTMLButtonElement>(null);
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
-      <DialogContent>
+    <Dialog open onOpenChange={(open) => { if (!open && !busy) onCancel(); }}>
+      <DialogContent
+        onOpenAutoFocus={(event) => { event.preventDefault(); cancel.current?.focus(); }}
+        onCloseAutoFocus={(event) => {
+          if (active.current instanceof HTMLElement && active.current.isConnected) {
+            event.preventDefault();
+            active.current.focus();
+          }
+        }}
+      >
         <DialogTitle>{title}</DialogTitle>
-        <div className="mt-3 grid gap-3">{children}</div>
-        <div className="mt-4 flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={onCancel}>
+        <DialogDescription asChild><div className="dialog-detail">{children}</div></DialogDescription>
+        <div className="dialog-actions">
+          <Button ref={cancel} type="button" variant="outline" disabled={busy} onClick={onCancel}>
             Cancel
           </Button>
-          <Button type="button" disabled={busy} onClick={onConfirm}>
-            {confirmLabel}
+          <Button type="button" variant={destructive ? "destructive" : "default"} disabled={busy} onClick={onConfirm}>
+            {busy ? "Working…" : confirmLabel}
           </Button>
         </div>
       </DialogContent>

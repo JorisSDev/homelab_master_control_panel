@@ -119,7 +119,7 @@ class StateTests(unittest.TestCase):
         self.assertEqual(scan[1]["result"], "host example finding")
         self.assertNotIn("min", scan[1]["heading"])
         self.assertIn("dry run", state["update"]["history"][0]["heading"])
-        self.assertTrue(state["update"]["history"][0]["heading"].startswith("2 Jan 2026, 03:04"))
+        self.assertTrue(state["update"]["history"][0]["heading"].startswith("2026-01-02 03:04"))
         self.assertEqual(state["update"]["security"], 7)
         self.assertEqual(state["update"]["pending"], 4)
         self.assertTrue(state["update"]["dry"])
@@ -138,7 +138,7 @@ class StateTests(unittest.TestCase):
                 "steps": [],
             }
         )
-        self.assertEqual(view["heading"], "7 Jun 2024, 08:05 · dry run · under a minute")
+        self.assertEqual(view["heading"], "2024-06-07 08:05 · dry run · under a minute")
         plain = _run_view(
             {
                 "start": "not a timestamp",
@@ -244,6 +244,7 @@ class StateTests(unittest.TestCase):
         state = build_state(CONFIG, snapshot(scan_logs=[dirty]))
         self.assertEqual(state["findings"]["count"], 1)
         self.assertEqual(state["findings"]["items"][0]["guest"], "201")
+        self.assertIn("2026-01-03 04:05", state["scan"]["history"][0]["heading"])
         self.assertIn("leftover file", state["findings"]["items"][0]["result"])
         self.assertIn("ISSUE CT 201 leftover file", state["findings"]["items"][0]["transcript"])
         clean = build_state(CONFIG, snapshot())
@@ -255,7 +256,7 @@ class StateTests(unittest.TestCase):
             snapshot(
                 mounts=[
                     {"mount": "/", "free": 20 * 1024 ** 3, "total": 32 * 1024 ** 3},
-                    {"mount": "/mnt/shelf", "free": 1 * 1024 ** 3, "total": 40 * 1024 ** 3},
+                    {"mount": "/mnt/shelf", "used": 38 * 1024 ** 3, "free": 1 * 1024 ** 3, "total": 40 * 1024 ** 3},
                 ],
                 storages=[
                     {"label": "local", "kind": "dir", "status": "active", "free": 20 * 1024 ** 3, "total": 32 * 1024 ** 3},
@@ -263,8 +264,8 @@ class StateTests(unittest.TestCase):
                 ],
             ),
         )
-        labels = [row["label"] for row in state["storage"]["rows"]]
-        self.assertEqual(labels, ["/", "/mnt/shelf", "guests"])
+        readings = [(row["label"], row["used"]) for row in state["storage"]["rows"]]
+        self.assertEqual(readings, [("/", "12.0 GB"), ("/mnt/shelf", "38.0 GB"), ("guests", "100.0 GB")])
         self.assertEqual(state["storage"]["status"], "Low on disk")
         self.assertIn("/mnt/shelf", state["storage"]["summary"])
 
@@ -297,14 +298,38 @@ class StateTests(unittest.TestCase):
                 return "MemTotal: 2048 kB\nMemAvailable: 1024 kB\n"
             if path == "/proc/loadavg":
                 return "0.50 0.40 0.30 1/2 9\n"
+            if path == "/proc/stat":
+                return "cpu 100 1 200 500 10 2 3 0 8 1\ncpu0 40 1 100 250 5 1 1 0 3 0\n"
             return ""
 
         host = read_host(reader)
         self.assertEqual(host["cores"], 2)
         self.assertEqual(host["load"], "0.50")
+        self.assertEqual(host["cpu_times"], (100, 1, 200, 500, 10, 2, 3, 0))
         counted = build_state(CONFIG, snapshot(host=host))
         self.assertEqual(counted["health"]["cores"], 2)
         self.assertEqual(counted["figures"]["cores"], 2)
+
+    def test_attention_prioritizes_stopped_boot_machines_and_missing_expected_disk(self):
+        clock = datetime.datetime(2026, 1, 2, tzinfo=datetime.timezone.utc)
+        state = build_state(
+            {"das": {"uuid": "fixture-volume", "mount": "/mnt/archive"}},
+            {
+                "guests": [
+                    {"id": "410", "name": "Router", "status": "running", "onboot": True, "order": 1},
+                    {"id": "411", "name": "Archive", "status": "stopped", "onboot": True},
+                    {"id": "412", "name": "Sandbox", "status": "stopped", "onboot": False},
+                    {"id": "413", "name": "Recorder"},
+                ],
+                "das": {"expected_uuid": "fixture-volume"},
+            },
+            clock,
+        )
+        self.assertEqual(state["observed_at"], clock.isoformat())
+        self.assertEqual([item["href"] for item in state["attention"][:2]], ["/guests/411", "/storage"])
+        self.assertIn("expected disk is not mounted", state["attention"][1]["text"])
+        self.assertNotIn("/guests/412", [item["href"] for item in state["attention"]])
+        self.assertTrue(any(item["severity"] == "unknown" and item["href"] == "/guests" for item in state["attention"]))
 
     def test_low_disk_is_called_out(self):
         state = build_state(

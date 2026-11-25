@@ -58,6 +58,7 @@ def build_state(config, snapshot, now=None):
     }
     guest_updates = {"checked": False, "error": "", "rows": [], "active": ""}
     built = {
+        "observed_at": clock.isoformat(),
         "refresh_seconds": int(config.get("refresh_seconds") or 10),
         "update": update,
         "scan": scan,
@@ -278,6 +279,13 @@ def _amount(value):
     return _size(value) or "0 MB"
 
 
+def _space_used(used, free, total):
+    if not total or (used is None and free is None):
+        return ""
+    amount = int(total) - int(free) if used is None else int(used)
+    return _amount(max(0, min(int(total), amount)))
+
+
 def _percent(value):
     number = _metric_value(value)
     if number is None or number < 0:
@@ -315,10 +323,11 @@ def _health(snapshot, schedule):
     load = str(host.get("load") or "")
     raw_cores = host.get("cores")
     cores = raw_cores if type(raw_cores) is int and raw_cores > 0 else 0
-    memory_used = _size(host.get("memory_used"))
     memory_total = _size(host.get("memory_total"))
-    disk_free = _size(host.get("disk_free"))
+    memory_used = _size(host.get("memory_used")) or ("0 MB" if memory_total and host.get("memory_used") == 0 else "")
     disk_total = _size(host.get("disk_total"))
+    disk_free = _size(host.get("disk_free")) or ("0 MB" if disk_total and host.get("disk_free") == 0 else "")
+    disk_used = _space_used(host.get("disk_used"), host.get("disk_free"), host.get("disk_total"))
     disk_timer = _timer_row(schedule, "das-health.timer")
     names = {"homelab-scan.timer", "homelab-update.timer", "das-health.timer"}
     housekeeping = [row for row in schedule["featured"] + schedule["housekeeping"] if row["unit"] not in names]
@@ -334,8 +343,8 @@ def _health(snapshot, schedule):
             parts.append(f"Load {load}")
         if memory_used and memory_total:
             parts.append(f"{memory_used} of {memory_total} memory in use")
-        if disk_free and disk_total:
-            parts.append(f"{disk_free} free of {disk_total}")
+        if disk_used and disk_total:
+            parts.append(f"{disk_used} of {disk_total} disk space used")
         summary = " · ".join(parts)
     return {
         "purpose": "Is the host itself all right.",
@@ -345,6 +354,7 @@ def _health(snapshot, schedule):
         "cores": cores,
         "memory_used": memory_used,
         "memory_total": memory_total,
+        "disk_used": disk_used,
         "disk_free": disk_free,
         "disk_total": disk_total,
         "disk_check": {
@@ -402,7 +412,7 @@ def _services(config, guests):
 def _storage(snapshot):
     rows = []
     for item in snapshot.get("mounts") or []:
-        rows.append(_space_row(item.get("mount") or "/", item.get("free"), item.get("total"), "mount"))
+        rows.append(_space_row(item.get("mount") or "/", item.get("free"), item.get("total"), "mount", used=item.get("used")))
     known = [row["free_bytes"] for row in rows]
     for item in snapshot.get("storages") or []:
         if item.get("kind") == "dir" and any(_close(item.get("free"), value) for value in known):
@@ -414,6 +424,7 @@ def _storage(snapshot):
                 {
                     "label": label,
                     "kind": item.get("kind") or "",
+                    "used": "",
                     "free": "",
                     "total": "",
                     "free_bytes": 0,
@@ -423,11 +434,11 @@ def _storage(snapshot):
                 }
             )
             continue
-        rows.append(_space_row(label, item.get("free"), item.get("total"), item.get("kind") or "storage", detail))
+        rows.append(_space_row(label, item.get("free"), item.get("total"), item.get("kind") or "storage", detail, used=item.get("used")))
     visible = [{key: value for key, value in row.items() if key != "free_bytes"} for row in rows]
     status, summary = _storage_summary(visible)
     return {
-        "purpose": "Free space on the host, the disk shelf, and the guest disks.",
+        "purpose": "Space used on the host, the disk shelf, and the guest disks.",
         "status": status,
         "summary": summary,
         "rows": visible,
@@ -444,7 +455,7 @@ def _storage_summary(visible):
     mounted = [row for row in visible if row["status"] != "Not mounted"]
     if mounted:
         root = next((row for row in mounted if row["label"] == "/"), mounted[0])
-        summary = f"{root['free']} free on {root['label']}" if root["free"] else "Space was reported."
+        summary = f"{root['used']} used on {root['label']}" if root["used"] else "Space was reported."
         if unmounted:
             summary = f"{summary.rstrip('.')}. {_unmounted_sentence(unmounted)}"
         return "Room to spare", summary
@@ -457,14 +468,15 @@ def _unmounted_sentence(names):
     return f"{', '.join(names)} are not mounted."
 
 
-def _space_row(label, free, total, kind, detail=""):
+def _space_row(label, free, total, kind, detail="", *, used=None):
     free_n = int(free or 0)
     total_n = int(total or 0)
     low = bool(total_n) and free_n / total_n < 0.1
     return {
         "label": label,
         "kind": kind,
-        "free": _size(free_n),
+        "used": _space_used(used, free, total_n),
+        "free": _size(free_n) or ("0 MB" if total_n and free == 0 else ""),
         "total": _size(total_n),
         "free_bytes": free_n,
         "status": "Low" if low else "Room",
@@ -550,9 +562,6 @@ def _schedule(config, timers, upgrades_active):
     return {"featured": featured, "housekeeping": housekeeping}
 
 
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-
-
 def _short_start(value):
     text = str(value or "").strip()
     if not text or ("T" not in text and " " not in text):
@@ -562,8 +571,7 @@ def _short_start(value):
         parsed = datetime.datetime.fromisoformat(candidate)
     except ValueError:
         return text
-    month = _MONTHS[parsed.month - 1]
-    return f"{parsed.day} {month} {parsed.year}, {parsed.hour:02d}:{parsed.minute:02d}"
+    return format_when(parsed, text)
 
 
 def _run_view(run):
@@ -579,6 +587,7 @@ def _run_view(run):
         transcript = transcript[:TRANSCRIPT_LIMIT]
     return {
         "heading": heading,
+        "started_at": run["start"],
         "ok": bool(run["ok"]),
         "result": run["result"],
         "steps": [_plain_step(step) for step in run["steps"]],

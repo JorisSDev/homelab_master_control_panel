@@ -381,23 +381,40 @@ def _path_detail(paths):
 
 def _attention(state):
     items = []
+    health = state["health"]
+    if health["status"] == "Not reported":
+        items.append({"severity": "unknown", "text": "Host measurements are unavailable.", "href": "/system"})
+    else:
+        metrics = {
+            "processor load": bool(health["load"]),
+            "memory": bool(health["memory_used"] and health["memory_total"]),
+            "internal storage": bool(health["disk_free"] and health["disk_total"]),
+        }
+        missing = [name for name, available in metrics.items() if not available]
+        if missing:
+            items.append({"severity": "unknown", "text": f"Missing host readings for {', '.join(missing)}.", "href": "/system"})
+    rows = state["services"]["rows"]
+    if not rows or any(row.get("status") == "Not reported" for row in rows):
+        text = "No machines were reported." if not rows else "Some machine statuses are unavailable."
+        items.append({"severity": "unknown", "text": text, "href": "/guests"})
+    if state["storage"]["status"] == "Not reported" and not health["disk_total"]:
+        items.append({"severity": "unknown", "text": "Storage readings are unavailable.", "href": "/storage"})
     for finding in (state.get("findings") or {}).get("items") or []:
         href = "/jobs/update" if finding.get("job") == "update" else "/jobs/scan"
         items.append({"severity": "down", "text": finding.get("result") or "A job failed", "href": href})
     if (state.get("storage") or {}).get("status") == "Low on disk":
         items.append({"severity": "attention", "text": state["storage"].get("summary") or "Low on disk", "href": "/storage"})
     if not state["protection"]["has_job"]:
-        items.append({"severity": "attention", "text": "There is no backup job.", "href": "/storage"})
+        items.append({"severity": "attention", "text": "No backup schedule was detected.", "href": "/storage"})
     for row in state["reach"]["monitors"].get("rows") or []:
         if row.get("status") == "down":
             items.append({"severity": "down", "text": f"{row.get('name')} is down", "href": "/reach"})
     if state["reach"]["monitors"].get("error") and state["reach"]["monitors"]["error"] != "Kuma is not configured.":
         items.append({"severity": "unknown", "text": state["reach"]["monitors"]["error"], "href": "/reach"})
-    rows = state["services"]["rows"]
-    boot = [row for row in rows if row.get("onboot") and isinstance(row.get("order"), int)]
-    if boot and boot[0].get("status") == "Stopped":
-        name = boot[0].get("name") or boot[0]["id"]
-        items.append({"severity": "down", "text": f"{name} is stopped. It is first in the boot sequence.", "href": f"/guests/{boot[0]['id']}"})
+    for row in rows:
+        if row.get("onboot") and row.get("status") == "Stopped":
+            name = row.get("name") or row["id"]
+            items.append({"severity": "down", "text": f"{name} is stopped and configured to start at boot.", "href": f"/guests/{row['id']}"})
     seen = {}
     for row in rows:
         address = row.get("address") or ""
@@ -411,8 +428,8 @@ def _attention(state):
             items.append({"severity": "attention", "text": f"{row.get('name') or row.get('id')} left its DNS pin.", "href": "/reach"})
     if state["reach"].get("multicast_snooping") is True:
         items.append({"severity": "attention", "text": "Multicast snooping is on.", "href": "/reach"})
-    if state["das"].get("match") == "Different disk":
-        items.append({"severity": "down", "text": "The mounted disk is not the expected disk.", "href": "/storage"})
+    if state["das"].get("match") in {"Different disk", "Not mounted"}:
+        items.append({"severity": "down", "text": state["das"]["summary"], "href": "/storage"})
     elif state["das"].get("faults"):
         items.append({"severity": "attention", "text": f"{state['das']['faults']} disk bus errors.", "href": "/storage"})
     plex = state["plex"]
@@ -423,4 +440,5 @@ def _attention(state):
         items.append({"severity": "attention", "text": state["scan_meaning"]["signature"], "href": "/jobs/scan"})
     if (state.get("health") or {}).get("status") == "Low on disk" and not any(item["href"] == "/storage" and "disk" in item["text"].lower() for item in items):
         items.append({"severity": "attention", "text": "The host disk is low.", "href": "/storage"})
-    return items
+    severity = {"down": 0, "attention": 1, "unknown": 2}
+    return sorted(items, key=lambda item: severity[item["severity"]])

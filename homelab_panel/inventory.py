@@ -170,6 +170,7 @@ def parse_pvesm(text, note=""):
                 "kind": parts[1],
                 "status": parts[2].lower(),
                 "total": int(parts[3]) * 1024,
+                "used": int(parts[4]) * 1024 if parts[4].isdigit() else None,
                 "free": int(parts[5]) * 1024,
                 "detail": paths.get(parts[0], ""),
             }

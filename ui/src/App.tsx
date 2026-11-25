@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
-import { Logo } from "./components/Logo";
+import { LoaderCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Login } from "./components/Login";
-import { Button } from "./components/ui/button";
+import { Navigation } from "./components/Navigation";
+import { Notice } from "./components/Chrome";
+import { Skeleton } from "./components/ui/skeleton";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { Guests } from "./pages/Guests";
 import { Jobs } from "./pages/Jobs";
@@ -18,47 +20,67 @@ type Props = {
   initialPath?: string;
 };
 
-const NAV = [
-  ["/", "Overview"],
-  ["/guests", "Machines"],
-  ["/reach", "Reach"],
-  ["/storage", "Storage"],
-  ["/jobs", "Jobs"],
-  ["/system", "System"],
-] as const;
-
 export function App({ initial = null, live = true, initialPath = "/" }: Props) {
   const [state, setState] = useState<ViewState | null>(initial);
   const [path, setPath] = useState(initialPath);
   const [ready, setReady] = useState(initial !== null || !live);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  const previousPath = useRef(initialPath);
 
   useEffect(() => {
     if (!live) {
       return;
     }
     let stop = false;
+    let pending: AbortController | null = null;
     const pull = async () => {
-      const response = await fetch("/api/state", { cache: "no-store" });
-      if (stop) {
+      if (pending) {
         return;
       }
-      if (response.status === 401) {
-        setState(null);
-        setReady(true);
-        return;
-      }
-      if (response.ok) {
-        setState((await response.json()) as ViewState);
-        setReady(true);
+      const request = new AbortController();
+      pending = request;
+      const timeout = window.setTimeout(() => request.abort(), 30000);
+      try {
+        const response = await fetch("/api/state", { cache: "no-store", signal: request.signal });
+        if (response.status !== 401 && !response.ok) {
+          throw new Error("Status request failed");
+        }
+        const next = response.status === 401 ? null : (await response.json()) as ViewState;
+        if (!stop) {
+          setState(next);
+          setReady(true);
+          setRefreshFailed(false);
+        }
+      } catch {
+        if (!stop) {
+          setRefreshFailed(true);
+        }
+      } finally {
+        window.clearTimeout(timeout);
+        pending = null;
       }
     };
     void pull();
     const timer = window.setInterval(() => void pull(), 10000);
     return () => {
       stop = true;
+      pending?.abort();
       window.clearInterval(timer);
     };
   }, [live]);
+
+  useEffect(() => {
+    const previous = previousPath.current;
+    previousPath.current = path;
+    if (previous.split("/")[1] === path.split("/")[1] || path === "/jobs/scan" || path === "/jobs/update") return;
+    const machineDetail = path.startsWith("/guests/");
+    if (machineDetail && window.matchMedia?.("(max-width: 1100px)").matches) return;
+    const frame = window.requestAnimationFrame(() => {
+      const heading = machineDetail ? document.getElementById("machine-detail-title") : null;
+      (heading || document.querySelector<HTMLElement>(".page-head h1"))?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [path]);
 
   useEffect(() => {
     if (!live) {
@@ -71,50 +93,39 @@ export function App({ initial = null, live = true, initialPath = "/" }: Props) {
   }, [live]);
 
   function go(next: string) {
+    if (next === path) return;
     if (live) {
       window.history.pushState(null, "", next);
+      if (path.split("/")[1] !== next.split("/")[1]) window.scrollTo(0, 0);
     }
     setPath(next);
   }
 
-  if (!ready) {
-    return <p className="quiet boot">Reading the host.</p>;
+  if (!state && (!ready || refreshFailed)) {
+    return (
+      <main className="boot">
+        {refreshFailed ? <Notice tone="error" message="Could not read the panel. Retrying automatically." /> : (
+          <div className="boot-content" role="status">
+            <Skeleton className="boot-heading" />
+            <Skeleton className="boot-panel" />
+            <p className="boot-status quiet"><LoaderCircle aria-hidden="true" />Reading the host…</p>
+          </div>
+        )}
+      </main>
+    );
   }
-  if (!state) {
-    return <Gate />;
-  }
+  if (!state) return <Gate />;
 
-  const page = route(path, state, setState, go);
   return (
     <TooltipProvider>
-    <div className="shell">
-      <aside>
-        <Button type="button" variant="ghost" className="brand h-auto justify-start px-0" aria-label="Home" onClick={() => go("/")}>
-          <Logo />
-          <span>Master control panel</span>
-        </Button>
-        <nav>
-          {NAV.map(([href, label]) => (
-            <a
-              key={href}
-              href={href}
-              aria-current={current(path, href) ? "page" : undefined}
-              onClick={(event) => {
-                event.preventDefault();
-                go(href);
-              }}
-            >
-              <span>{label}</span>
-              {href === "/" && needsYou(state) ? <span className="ml-auto size-1.5 rounded-full bg-[var(--attention)]" role="status" aria-label="Needs you" /> : null}
-            </a>
-          ))}
-        </nav>
-        <Button type="button" variant="ghost" className="version mt-auto h-auto justify-start px-0 text-[var(--muted)]" onClick={() => go("/system")}>
-          {state.panel.version || "dev"}
-        </Button>
-      </aside>
-      <main>{page}</main>
-    </div>
+      <div className="shell">
+        <a href="#main-content" className="skip-link">Skip to content</a>
+        <Navigation path={path} go={go} version={state.panel.version || "dev"} attention={refreshFailed || needsYou(state)} />
+        <main className="main-content" id="main-content" tabIndex={-1}>
+          {refreshFailed ? <Notice tone="warning" message="Refresh failed. Showing the last good snapshot." /> : null}
+          {route(path, state, setState, go, refreshFailed)}
+        </main>
+      </div>
     </TooltipProvider>
   );
 }
@@ -145,14 +156,7 @@ function needsYou(state: ViewState) {
   return state.findings.items.length > 0;
 }
 
-function current(path: string, href: string) {
-  if (href === "/") {
-    return path === "/";
-  }
-  return path === href || path.startsWith(`${href}/`);
-}
-
-function route(path: string, state: ViewState, setState: (next: ViewState) => void, go: (next: string) => void) {
+function route(path: string, state: ViewState, setState: (next: ViewState) => void, go: (next: string) => void, stale: boolean) {
   if (path === "/guests" || path.startsWith("/guests/")) {
     return <Guests state={state} path={path} go={go} onState={setState} />;
   }
@@ -171,5 +175,5 @@ function route(path: string, state: ViewState, setState: (next: ViewState) => vo
   if (path === "/system") {
     return <SystemPage state={state} />;
   }
-  return <Overview state={state} go={go} />;
+  return <Overview state={state} go={go} stale={stale} />;
 }

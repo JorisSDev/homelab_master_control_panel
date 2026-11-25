@@ -1,7 +1,8 @@
+import { ArrowDownToLine, LogOut, ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { Empty, Page } from "../components/Chrome";
+import { Badge, Empty, Notice, Page, Panel } from "../components/Chrome";
 import { Button } from "../components/ui/button";
-import { Card } from "../components/ui/card";
+import { Field, FieldError, FieldLabel } from "../components/ui/field";
 import { Input } from "../components/ui/input";
 import { postJson } from "../lib";
 import type { ViewState } from "../types";
@@ -10,115 +11,128 @@ export function Recovery({ state }: { state: ViewState }) {
   const items = state.recovery || [];
   return (
     <Page title="Recovery" context="The first things to check after the host comes back.">
-      {items.length === 0 ? <Empty>The recovery checklist has not been read.</Empty> : null}
-      <ol className="sequence">
-        {items.map((item) => (
-          <li key={item.id}>
-            <span className={item.ok === false ? "bad" : item.ok ? "ok" : ""}>{item.ok === false ? "down" : item.ok ? "up" : "unknown"}</span>
-            <span>
-              {item.label}
-              {item.detail ? <span className="note">{item.detail}</span> : null}
-            </span>
-          </li>
-        ))}
-      </ol>
+      <Panel title="Host checklist">
+        {items.length === 0 ? <Empty>The recovery checklist has not been read.</Empty> : (
+          <ol className="checklist">
+            {items.map((item) => (
+              <li key={item.id}>
+                <div><strong>{item.label}</strong>{item.detail ? <span className="note">{item.detail}</span> : null}</div>
+                <Badge value={item.ok === false ? "Needs attention" : item.ok ? "Passed" : "Unknown"} />
+              </li>
+            ))}
+          </ol>
+        )}
+      </Panel>
     </Page>
   );
 }
 
+type Feedback = { text: string; ok: boolean };
+
 export function SystemPage({ state }: { state: ViewState }) {
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [releaseMessage, setReleaseMessage] = useState<Feedback | null>(null);
+  const [installing, setInstalling] = useState(false);
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState<Feedback | null>(null);
   const [passwordBusy, setPasswordBusy] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [sessionError, setSessionError] = useState("");
 
   async function install() {
-    setBusy(true);
-    setMessage("");
+    setInstalling(true);
+    setReleaseMessage(null);
     const result = await postJson("/api/panel/update");
-    setBusy(false);
-    setMessage(result.ok ? "Installing the panel." : String(result.data.error || "The panel did not update."));
+    setInstalling(false);
+    setReleaseMessage({ ok: result.ok, text: result.ok ? "Installing the panel." : String(result.data.error || "The panel did not update.") });
   }
 
   async function changePassword(event: FormEvent) {
     event.preventDefault();
+    if (passwordBusy || !current || !next || !confirm) return;
     setPasswordBusy(true);
-    setPasswordMessage("");
+    setPasswordMessage(null);
     const result = await postJson("/api/password", { current, new: next, confirm });
     setPasswordBusy(false);
     if (!result.ok) {
-      setPasswordMessage(String(result.data.error || "The password was not changed."));
+      setPasswordMessage({ ok: false, text: String(result.data.error || "The password was not changed.") });
       return;
     }
     setCurrent("");
     setNext("");
     setConfirm("");
-    setPasswordMessage("The password was changed.");
+    setPasswordMessage({ ok: true, text: "The password was changed." });
   }
 
   async function signOut() {
-    await postJson("/api/logout");
-    window.location.reload();
+    setSigningOut(true);
+    setSessionError("");
+    const result = await postJson("/api/logout");
+    if (result.ok) {
+      window.location.reload();
+      return;
+    }
+    setSigningOut(false);
+    setSessionError(String(result.data.error || "Could not sign out."));
   }
 
+  const passwordError = passwordMessage && !passwordMessage.ok ? passwordMessage.text : "";
+  const installed = state.panel.version || "Unknown";
+  const published = state.panel.latest || "Unknown";
+  const releaseTag = /^v[0-9]+\.[0-9]+\.[0-9]+$/;
+  const aheadOfGitHub = releaseTag.test(installed) && releaseTag.test(published)
+    && installed.localeCompare(published, "en", { numeric: true }) > 0;
+
   return (
-    <Page
-      title="System"
-      context={state.panel.version ? `Version ${state.panel.version}` : "Panel"}
-      action={
-        <Button type="button" variant="outline" onClick={() => void signOut()}>
-          Sign out
-        </Button>
-      }
-    >
-      <p>
-        {state.panel.update_available
-          ? `Version ${state.panel.latest} is published.`
-          : state.panel.latest
-            ? "This is the published version."
-            : "Release lookup has no result."}
-      </p>
-      {state.panel.error ? <p className="quiet">{state.panel.error}</p> : null}
-      {message ? <p className={message.startsWith("Installing") ? "ok" : "bad"}>{message}</p> : null}
-      {state.panel.update_available ? (
-        <Button type="button" disabled={busy} onClick={() => void install()}>
-          Install this version
-        </Button>
-      ) : null}
-      <Card className="figure">
-      <p className="section-label">Password</p>
-      <form className="password-form" onSubmit={(event) => void changePassword(event)}>
-        <label>
-          Current password
-          <Input type="password" name="current" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
-        </label>
-        <label>
-          New password
-          <Input type="password" name="new" autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} />
-        </label>
-        <label>
-          Confirm password
-          <Input type="password" name="confirm" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} />
-        </label>
-        <Button type="submit" disabled={passwordBusy || !current || !next || !confirm}>
-          Change password
-        </Button>
-      </form>
-      {passwordMessage ? <p className={passwordMessage.startsWith("The password was changed") ? "ok" : "bad"}>{passwordMessage}</p> : null}
-      </Card>
-      <p className="section-label">Operator log</p>
-      {(state.operator || []).length === 0 ? <Empty>No panel actions have been recorded.</Empty> : null}
-      <ul>
-        {(state.operator || []).map((item) => (
-          <li key={item.text}>{item.text}</li>
-        ))}
-      </ul>
-      <p>
-        <a href="/api/report">Download a redacted report</a>
-      </p>
+    <Page title="System" action={(
+      <Button type="button" variant="outline" disabled={signingOut} onClick={() => void signOut()}>
+        <LogOut aria-hidden="true" />{signingOut ? "Signing out…" : "Sign out"}
+      </Button>
+    )}>
+      <Notice tone="error" message={sessionError} />
+      <div className="two-panels">
+        <Panel title="Panel release" action={state.panel.update_available ? <Badge value="Update available" /> : undefined}>
+          <dl className="fact-list">
+            <div><dt>Installed version</dt><dd className="technical">{installed}</dd></div>
+            <div><dt>Latest GitHub release</dt><dd className="technical">{published}</dd></div>
+          </dl>
+          {aheadOfGitHub ? <p className="meta">This panel is running a newer build than the latest GitHub release.</p> : null}
+          {state.panel.error ? <Notice tone="warning" message={state.panel.error} /> : null}
+          {releaseMessage ? <Notice tone={releaseMessage.ok ? "success" : "error"} message={releaseMessage.text} /> : null}
+          {state.panel.update_available ? (
+            <div><Button type="button" disabled={installing} onClick={() => void install()}>{installing ? "Installing…" : "Install this version"}</Button></div>
+          ) : null}
+        </Panel>
+        <Panel title="Security" action={<ShieldCheck aria-hidden="true" className="quiet" />}>
+          <form className="password-form" aria-busy={passwordBusy} aria-describedby={passwordError ? "password-error" : undefined} onSubmit={(event) => void changePassword(event)}>
+            <Field>
+              <FieldLabel htmlFor="current-password">Current password</FieldLabel>
+              <Input id="current-password" type="password" name="current" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="new-password">New password</FieldLabel>
+              <Input id="new-password" type="password" name="new" autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="confirm-password">Confirm password</FieldLabel>
+              <Input id="confirm-password" type="password" name="confirm" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} />
+            </Field>
+            {passwordError ? <FieldError id="password-error">{passwordError}</FieldError> : null}
+            {passwordMessage?.ok ? <Notice tone="success" message={passwordMessage.text} /> : null}
+            <Button type="submit" disabled={passwordBusy || !current || !next || !confirm}>{passwordBusy ? "Saving…" : "Change password"}</Button>
+          </form>
+        </Panel>
+      </div>
+      <Panel title="Operator log" action={(
+        <Button variant="outline" asChild><a href="/api/report"><ArrowDownToLine aria-hidden="true" />Download a redacted report</a></Button>
+      )}>
+        {(state.operator || []).length === 0 ? <Empty>No panel actions have been recorded.</Empty> : (
+          <ul className="activity-list">
+            {(state.operator || []).map((item, index) => <li key={`${item.text}-${index}`}>{item.text}</li>)}
+          </ul>
+        )}
+      </Panel>
     </Page>
   );
 }

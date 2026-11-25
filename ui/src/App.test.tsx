@@ -1,5 +1,7 @@
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { awayLines, machineMark, reorderIds } from "./lib";
 import type { JobView, ViewState } from "./types";
@@ -10,7 +12,7 @@ const job = (over: Partial<JobView> = {}): JobView => ({
   status: "Idle",
   detail: "Last report: clean.",
   summary: "Last report: clean.",
-  next: "Sun 04 Jan 06:00",
+  next: "2026-01-04 06:00",
   note: "",
   started: "",
   elapsed: "",
@@ -37,7 +39,7 @@ const fixture: ViewState = {
     last_result: "dry run",
     history: [
       {
-        heading: "2026-01-02T03:04:05+00:00 · dry run · under a minute",
+        heading: "2026-01-02 03:04 · dry run · under a minute",
         ok: true,
         result: "dry run",
         steps: ["Guest 201 · Packages"],
@@ -51,7 +53,7 @@ const fixture: ViewState = {
     next: "Tue 02 Jan 04:00",
     history: [
       {
-        heading: "2026-01-02T04:05:00+00:00 · 35 min",
+        heading: "2026-01-02 04:05 · 35 min",
         ok: true,
         result: "clean",
         steps: ["Guest 201 · Malware scan"],
@@ -118,7 +120,7 @@ const fixture: ViewState = {
         job: "scan",
         guest: "host",
         result: "host example finding",
-        heading: "2026-01-02T04:00:00+00:00",
+        heading: "2026-01-02 04:00",
         transcript: "ISSUE host example finding",
         hidden_lines: 0,
       },
@@ -145,10 +147,10 @@ describe("master panel", () => {
         standing: [],
       },
       week: [
-        { unit: "homelab-scan.timer", label: "Daily scan", next: "Tue 02 Jan 04:00", soon: true },
-        { unit: "homelab-update.timer", label: "Sunday update", next: "Sun 04 Jan 06:00", soon: true },
-        { unit: "pve-daily-update.timer", label: "Proxmox package refresh", next: "Wed 03 Jan 02:00", soon: true },
-        { unit: "logrotate.timer", label: "Log rotate", next: "Wed 03 Jan 00:00", soon: true },
+        { unit: "homelab-scan.timer", label: "Daily scan", next: "2026-01-02 04:00", soon: true },
+        { unit: "homelab-update.timer", label: "Sunday update", next: "2026-01-04 06:00", soon: true },
+        { unit: "pve-daily-update.timer", label: "Proxmox package refresh", next: "2026-01-03 02:00", soon: true },
+        { unit: "logrotate.timer", label: "Log rotate", next: "2026-01-03 00:00", soon: true },
       ],
       upcoming: [{ unit: "logrotate.timer", label: "Log rotate", next: "Wed 03 Jan 00:00", soon: true }],
       chronology: [{ text: "qmcreate 116 OK", href: "/guests/116" }],
@@ -166,7 +168,7 @@ describe("master panel", () => {
       },
     };
     const html = page("/", shown);
-    const nav = html.slice(html.indexOf("<nav>"), html.indexOf("</nav>"));
+    const nav = new DOMParser().parseFromString(html, "text/html").querySelector('[aria-label="Main navigation"]')?.innerHTML || "";
     for (const label of ["Overview", "Machines", "Reach", "Storage", "Jobs", "System"]) {
       expect(nav).toContain(`>${label}<`);
     }
@@ -179,16 +181,16 @@ describe("master panel", () => {
     expect(html).toContain("host example finding");
     expect(html).toContain("Coming up");
     expect(html).toContain("Scan");
-    expect(html).toContain("Tue 02 Jan 04:00");
+    expect(html).toContain("2026-01-02 04:00");
     expect(html).toContain("Sunday update");
-    expect(html).toContain("Sun 04 Jan 06:00");
+    expect(html).toContain("2026-01-04 06:00");
     expect(html).toContain("Proxmox package refresh");
     expect(html).toContain("30%");
     expect(html).toContain("Load 1.20 on 4 cores");
     expect(html).toContain("Internal");
     expect(html).toContain("External");
-    expect(html).toContain("20.0 / 32.0 GB");
-    expect(html).toContain(">free<");
+    expect(html).toContain("12.0 / 32.0 GB");
+    expect(html).toContain(">used<");
     expect(html).toContain("100.0 / 200.0 GB");
     expect(html).toContain("8.0 / 15.3 GB");
     expect(html).toContain("in use");
@@ -209,10 +211,72 @@ describe("master panel", () => {
       ...fixture,
       findings: { ...fixture.findings, count: 0, items: [] },
     });
-    expect(clear).toContain("The house is clear.");
+    expect(clear).toContain("No issues reported");
     const busy = page("/", { ...shown, scan: { ...shown.scan, idle: false, status: "Scan running" } });
     expect(busy).toContain("Scan running");
     expect(busy).toContain('href="/jobs/scan"');
+  });
+
+  it("distinguishes missing health readings, measured CPU, and capacity units", () => {
+    const shown: ViewState = {
+      ...fixture,
+      observed_at: "2026-01-02T15:05:00",
+      attention: [{ severity: "unknown", text: "Machine status is unavailable.", href: "/guests" }],
+      health: { ...fixture.health, load: "0.40", cores: 4, cpu_usage: 0, disk_free: "256 MB", disk_total: "1.0 TB" },
+    };
+    const html = page("/", shown);
+    expect(html).toContain("Health data incomplete");
+    expect(html).toContain('dateTime="2026-01-02T15:05:00">2026-01-02 15:05</time>');
+    expect(html).toContain("CPU usage");
+    expect(html).toContain(">0%<");
+    expect(html).toContain("Load 0.40 on 4 cores");
+    expect(html).toContain("1023.8 GB / 1.0 TB");
+    const document = new DOMParser().parseFromString(html, "text/html");
+    expect(Number(document.querySelector('[aria-label="Internal in use"]')?.getAttribute("aria-valuenow"))).toBeGreaterThan(99);
+    const missing = page("/", { ...shown, health: { ...shown.health, load: "", cpu_usage: null } });
+    expect(missing).toContain("Load unavailable");
+    expect(missing).not.toContain(">0%<");
+  });
+
+  it("exposes past runs and keeps logs out of collapsed rows", () => {
+    const older = { heading: "2026-01-01 04:00", started_at: "2026-01-01T04:00:00Z", ok: false, result: "incomplete", steps: [], transcript: "Earlier run log", hidden_lines: 0 };
+    const html = page("/jobs", { ...fixture, scan: { ...fixture.scan, history: [...fixture.scan.history, older] } });
+    const document = new DOMParser().parseFromString(html, "text/html");
+    const scan = document.querySelector('[aria-label="Scan history"]');
+    const update = document.querySelector('[aria-label="Update history"]');
+    expect(scan?.querySelectorAll("details:not([open])")).toHaveLength(2);
+    expect(scan?.querySelector("time")?.dateTime).toBe(older.started_at);
+    expect(scan?.textContent).toContain("Incomplete");
+    expect(scan?.textContent).not.toContain("Earlier run log");
+    expect(update?.textContent).toContain("Completed");
+    expect(update?.textContent).toContain("dry run");
+  });
+
+  it("retains the last snapshot during a refresh failure and recovers", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("fetch", vi.fn()
+      .mockRejectedValueOnce(new TypeError("Network unavailable"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(fixture)))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(fixture))));
+    const element = document.createElement("div");
+    const root = createRoot(element);
+    try {
+      await act(async () => root.render(<App />));
+      expect(element.textContent).toContain("Could not read the panel");
+      await act(async () => vi.advanceTimersByTimeAsync(10000));
+      expect(element.textContent).toContain("host example finding");
+      await act(async () => vi.advanceTimersByTimeAsync(10000));
+      expect(element.textContent).toContain("Showing the last good snapshot");
+      expect(element.textContent).toContain("host example finding");
+      await act(async () => vi.advanceTimersByTimeAsync(10000));
+      expect(element.textContent).not.toContain("Refresh failed");
+    } finally {
+      await act(async () => root.unmount());
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 
   it("shows the running scan in plain language and hides the start button", () => {
@@ -283,7 +347,7 @@ describe("master panel", () => {
     expect(html).toContain('aria-label="Move media up"');
     expect(html).toContain('aria-label="Move media down"');
     expect(html).not.toContain("nextcloud:apache");
-    expect(html).toContain('aria-label="Filter"');
+    expect(html).toContain('aria-label="Filter machines"');
     expect(html).not.toContain("api/push");
     expect(html).not.toContain("machineIdentifier");
     expect(html).not.toContain("apt-get install");
@@ -291,9 +355,9 @@ describe("master panel", () => {
     const house = page("/guests/216");
     expect(html).toContain("Machines");
     expect(html).toContain("Sort by");
-    expect(html).toContain(">Boot<");
+    expect(html).toContain(">Boot order<");
     expect(html).toContain(">Address<");
-    expect(html).not.toContain(">Save<");
+    expect(html).not.toContain(">Save boot order<");
     expect(html).not.toContain("the next time the host starts");
     expect(html).not.toContain("Nothing restarts now");
     expect(media).toContain("nextcloud:apache");
@@ -398,10 +462,11 @@ describe("master panel", () => {
       },
     });
     expect(html).toContain("calendar-grid");
-    expect(html.indexOf(">Mon<")).toBeLessThan(html.indexOf(">Sun<"));
+    expect(html).toContain('aria-label="pirmadienis">pr<');
+    expect(html.indexOf(">pr<")).toBeLessThan(html.indexOf(">sk<"));
     expect(html).toContain("Previous month");
     expect(html).toContain("Next month");
-    expect(html).toContain("is-today");
+    expect(html).toContain('aria-current="date"');
     const cells = html.slice(html.indexOf("calendar-grid"), html.indexOf("data-rail"));
     expect(cells).toContain("<button");
     expect(cells).toContain("06:00");
@@ -451,12 +516,12 @@ describe("master panel", () => {
     expect(reach).toContain("24h");
     expect(reach).toContain("7d");
     expect(reach).toContain("Last down");
-    expect(reach).toContain("Last down is within 30 days.");
+    expect(reach).toContain("Last down covers the past 30 days.");
     expect(reach).toContain("—");
     expect(reach).toContain("1 pins match");
     expect(reach).toContain("Multicast snooping");
-    expect(reach).toContain("is off");
-    expect(reach).toContain("listening");
+    expect(reach).toMatch(/Multicast snooping<\/dt><dd>Off/);
+    expect(reach).toContain("Listening");
     expect(reach).not.toContain("Public");
     expect(reach).not.toContain("Open Kuma");
     expect(reach).not.toContain("api/push");
@@ -480,8 +545,8 @@ describe("master panel", () => {
     expect(linked).toContain("99.5%");
     expect(linked).toContain("98.0%");
     expect(linked).toContain("90.5%");
-    expect(linked).toContain("24 Nov 20:53");
-    expect(linked).toContain("Last down is within 30 days.");
+    expect(linked).toContain("2026-11-24 20:53");
+    expect(linked).toContain("Last down covers the past 30 days.");
     expect(linked).toContain("Open Kuma");
     expect(linked).toContain('href="http://10.0.0.41:3001"');
     expect(linked).toContain('target="_blank"');
@@ -495,10 +560,10 @@ describe("master panel", () => {
     expect(unsafe).not.toContain("Open Kuma");
     const storage = page("/storage");
     expect(storage).toContain("Run disk check");
-    expect(storage).toContain("Nothing is backed up. There is no backup job, and no machine has a second copy.");
+    expect(storage).toContain("No protection records are available.");
     expect(storage).not.toContain(">Where<");
-    expect(storage).toContain("20.0 / 32.0 GB");
-    expect(storage).toContain(">free<");
+    expect(storage).toContain("12.0 / 32.0 GB");
+    expect(storage).toContain(">used<");
     const copied = page("/storage", {
       ...fixture,
       protection: {
@@ -522,15 +587,19 @@ describe("master panel", () => {
     expect(copied).toContain("External storage");
     expect(copied).toContain("The shelf is mounted.");
     expect(copied).toContain("6.0 Gb/s");
-    expect(copied).toContain("2 bus errors.");
+    expect(copied).toMatch(/Bus errors<\/dt><dd class="num">2<\/dd>/);
     expect(copied).toContain("fstab waits for the disk.");
     const system = page("/system");
     expect(system).toContain("Install this version");
     expect(system).toContain("Sign out");
     expect(system).toContain("v0.4.0");
+    expect(system).toContain("Latest GitHub release");
     const current = page("/system", { ...fixture, panel: { ...fixture.panel, update_available: false } });
     expect(current).not.toContain("Install this version");
     expect(current).toContain("Sign out");
+    const ahead = page("/system", { ...fixture, panel: { ...fixture.panel, version: "v0.14.10", latest: "v0.14.2", update_available: false } });
+    expect(ahead).toContain("This panel is running a newer build than the latest GitHub release.");
+    expect(ahead).not.toContain("Install this version");
     expect(page("/", rich)).toContain("Open the recovery checklist");
   });
 
@@ -546,5 +615,209 @@ describe("master panel", () => {
     const after = { ...before, scan: "finding", monitors: "Media:down", event: "Scan finished" };
     expect(awayLines(before, after)).toEqual(["Scan is now finding", "A monitor changed.", "Scan finished"]);
     expect(awayLines(before, before)).toEqual([]);
+  });
+});
+
+type WriteRequest = { url: string; payload?: unknown };
+
+async function exercisePanel(
+  path: string,
+  test: (panel: HTMLElement, writes: WriteRequest[]) => Promise<void>,
+  state: ViewState = fixture,
+  mode: "snapshot" | "signed-out" = "snapshot",
+) {
+  const writes: WriteRequest[] = [];
+  const panel = document.createElement("div");
+  document.body.appendChild(panel);
+  const root = createRoot(panel);
+  const originalPath = window.location.pathname;
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("fetch", vi.fn(async (input: string, options?: RequestInit) => {
+    if (options?.method === "POST") {
+      writes.push({ url: input, payload: typeof options.body === "string" ? JSON.parse(options.body) : undefined });
+      if (input === "/api/login") return Response.json({ error: "Incorrect password." }, { status: 401 });
+      return Response.json({ ok: true }, { status: 202 });
+    }
+    return mode === "signed-out" ? new Response(null, { status: 401 }) : Response.json(state);
+  }));
+  try {
+    if (mode === "signed-out") window.history.replaceState(null, "", path);
+    await act(async () => root.render(<App initialPath={path} initial={mode === "snapshot" ? state : null} live={mode === "signed-out"} />));
+    await test(panel, writes);
+  } finally {
+    await act(async () => root.unmount());
+    window.history.replaceState(null, "", originalPath);
+    panel.remove();
+    vi.unstubAllGlobals();
+  }
+}
+
+function control(label: string, root: ParentNode = document) {
+  const button = [...root.querySelectorAll<HTMLButtonElement>("button")]
+    .find((item) => (item.getAttribute("aria-label") || item.textContent?.trim()) === label);
+  if (!button) throw new Error(`Missing button: ${label}`);
+  return button;
+}
+
+async function press(element: HTMLElement | null) {
+  if (!element) throw new Error("Missing control");
+  await act(async () => element.click());
+}
+
+function enter(input: HTMLInputElement | null, value: string) {
+  if (!input) throw new Error("Missing input");
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+describe("redesigned workflows", () => {
+  it("keeps navigation and reports accessible without dispatching an action", async () => {
+    await exercisePanel("/", async (panel, writes) => {
+      expect(panel.querySelector('a[href="/api/report"]')?.textContent).toBe("Report");
+      await press(control("More", panel));
+      const sheet = document.querySelector('[aria-label="More pages"]');
+      expect(sheet).not.toBeNull();
+      await press(sheet?.querySelector('a[href="/storage"]') as HTMLElement);
+      expect(panel.querySelector("h1")?.textContent).toBe("Storage");
+      await press(panel.querySelector('[aria-label="Main navigation"] a[href="/guests"]'));
+      await press(panel.querySelector('main a[href="/guests/201"]'));
+      expect(panel.querySelector(".machine-detail h2")?.textContent).toBe("media");
+      await press(control("Update this machine", panel));
+      expect(document.querySelector('[role="dialog"]')?.textContent).toContain("can recreate its Compose services");
+      await press(control("Cancel", document.querySelector('[role="dialog"]')!));
+      expect(writes).toEqual([]);
+    });
+  });
+
+  it("sends boot order only after an explicit confirmation", async () => {
+    await exercisePanel("/guests", async (panel, writes) => {
+      await press(control("Move house up", panel));
+      await press(control("Save boot order", panel));
+      await press(control("Cancel", document.querySelector('[role="dialog"]')!));
+      expect(writes).toEqual([]);
+      await press(control("Save boot order", panel));
+      await press(control("Save", document.querySelector('[role="dialog"]')!));
+      expect(writes).toEqual([{ url: "/api/guests/order", payload: { confirm: true, ids: ["216", "201"] } }]);
+    });
+  });
+
+  it("requires confirmation to schedule an update and retains the original payload", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 25, 11));
+    const scheduled: ViewState = {
+      ...fixture,
+      calendar: { rules: [{ label: "Update", weekdays: [6], time: "06:00" }], standing: [] },
+    };
+    try {
+      await exercisePanel("/jobs", async (panel, writes) => {
+        const day = () => panel.querySelector<HTMLButtonElement>('button[data-date="2026-11-26"]');
+        expect(day()?.getAttribute("aria-label")).toBe("2026 m. lapkričio 26 d., ketvirtadienis");
+        await press(day());
+        await press(control("Schedule one run"));
+        await press(control("Cancel", document.querySelector(".dialog-surface")!));
+        expect(writes).toEqual([]);
+        await press(day());
+        await press(control("Schedule one run"));
+        await press(control("Schedule one run", document.querySelector(".dialog-surface")!));
+        expect(writes).toEqual([{ url: "/api/jobs/update/schedule", payload: { confirm: true, action: "once", date: "2026-11-26", time: "06:00" } }]);
+      }, scheduled);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves the scan, package check, dry run, and update requests", async () => {
+    await exercisePanel("/jobs/update", async (panel, writes) => {
+      await press(control("Dry run", panel));
+      await press(control("Cancel", document.querySelector(".dialog-surface")!));
+      expect(writes).toEqual([]);
+      await press(control("Run the scan", panel));
+      await press(control("Check for updates", panel));
+      await press(control("Dry run", panel));
+      await press(control("Start the dry run", document.querySelector(".dialog-surface")!));
+      await press(control("Update all", panel));
+      await press(control("Start the update", document.querySelector(".dialog-surface")!));
+      expect(writes).toEqual([
+        { url: "/api/actions/scan" },
+        { url: "/api/packages/check" },
+        { url: "/api/guests/check" },
+        { url: "/api/actions/update", payload: { confirm: true, dry: true } },
+        { url: "/api/actions/update", payload: { confirm: true } },
+      ]);
+    });
+  });
+
+  it("keeps rejected sign-in feedback in the form and sends the remember choice", async () => {
+    await exercisePanel("/", async (panel, writes) => {
+      await act(async () => {
+        enter(panel.querySelector('input[name="password"]'), "fixture-password");
+        panel.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click();
+      });
+      await press(control("Sign in", panel));
+      expect(panel.querySelector("#sign-in-error")?.textContent).toBe("Incorrect password.");
+      expect(panel.querySelector('input[name="password"]')?.getAttribute("aria-invalid")).toBe("true");
+      expect(writes).toEqual([{ url: "/api/login", payload: { password: "fixture-password", remember: true } }]);
+    }, fixture, "signed-out");
+  });
+});
+
+describe("remaining host action contracts", () => {
+  it.each([
+    ["skip", false, "Skip this one", { confirm: true, action: "skip", weekday: 6 }],
+    ["restore", true, "Put it back", { confirm: true, action: "restore" }],
+    ["move", false, "Move weekly time", { confirm: true, action: "move", weekday: 6, time: "17:30" }],
+  ] as const)("retains the %s schedule operation", async (operation, skipped, confirmLabel, payload) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 25, 11));
+    const state: ViewState = {
+      ...fixture,
+      calendar: { rules: [{ label: "Update", weekdays: [6], time: "06:00" }], standing: [] },
+      schedule: { skip: skipped ? "2026-11-29" : "", weekly: null, once: "", once_time: "" },
+    };
+    try {
+      await exercisePanel("/jobs", async (panel, writes) => {
+        await press(panel.querySelector('button[data-date="2026-11-29"]'));
+        expect(writes).toEqual([]);
+        if (operation === "move") {
+          const input = document.querySelector<HTMLInputElement>('.popover-surface input[name="time"]');
+          await act(async () => enter(input, "24:00"));
+          expect(control("Save", document.querySelector(".popover-surface")!).disabled).toBe(true);
+          await act(async () => enter(input, "17:30"));
+          await press(control("Save", document.querySelector(".popover-surface")!));
+        } else {
+          await press(control(confirmLabel, document.querySelector(".popover-surface")!));
+        }
+        expect(writes).toEqual([]);
+        await press(control(confirmLabel, document.querySelector(".dialog-surface")!));
+        expect(writes).toEqual([{ url: "/api/jobs/update/schedule", payload }]);
+      }, state);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves diagnostic, disk, release, and password controls", async () => {
+    await exercisePanel("/reach", async (panel, writes) => {
+      await press(control("Check paths", panel));
+      await press(control("Check DNS pins", panel));
+      await press(panel.querySelector('[aria-label="Main navigation"] a[href="/storage"]'));
+      await press(control("Run disk check", panel));
+      await press(panel.querySelector('[aria-label="Main navigation"] a[href="/system"]'));
+      expect(panel.querySelector('a[href="/api/report"]')?.textContent).toBe("Download a redacted report");
+      await press(control("Install this version", panel));
+      await act(async () => {
+        enter(panel.querySelector('input[name="current"]'), "old-fixture-password");
+        enter(panel.querySelector('input[name="new"]'), "new-fixture-password");
+        enter(panel.querySelector('input[name="confirm"]'), "new-fixture-password");
+      });
+      await press(control("Change password", panel));
+      expect(writes).toEqual([
+        { url: "/api/reach/paths" },
+        { url: "/api/reach/pins" },
+        { url: "/api/actions/disk" },
+        { url: "/api/panel/update" },
+        { url: "/api/password", payload: { current: "old-fixture-password", new: "new-fixture-password", confirm: "new-fixture-password" } },
+      ]);
+    });
   });
 });

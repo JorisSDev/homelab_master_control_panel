@@ -2,7 +2,7 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import type { ComponentProps, ReactNode } from "react";
 
 export function TooltipProvider({ children }: { children: ReactNode }) {
-  return <TooltipPrimitive.Provider delayDuration={400}>{children}</TooltipPrimitive.Provider>;
+  return <TooltipPrimitive.Provider delayDuration={400} skipDelayDuration={300}>{children}</TooltipPrimitive.Provider>;
 }
 
 export function Tooltip({ ...props }: ComponentProps<typeof TooltipPrimitive.Root>) {
@@ -18,7 +18,7 @@ export function TooltipContent({ className, ...props }: ComponentProps<typeof To
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
         sideOffset={6}
-        className={`z-20 rounded-[4px] border border-[var(--line)] bg-[var(--paper)] px-2 py-1 text-[12px] text-[var(--ink)] ${className || ""}`}
+        className={`tooltip-surface ${className || ""}`}
         {...props}
       />
     </TooltipPrimitive.Portal>

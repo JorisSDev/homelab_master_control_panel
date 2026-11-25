@@ -37,4 +37,4 @@ def parse_timers(rows):
 def format_when(moment, empty):
     if moment is None:
         return empty
-    return moment.strftime("%a %d %b %H:%M")
+    return moment.strftime("%Y-%m-%d %H:%M")

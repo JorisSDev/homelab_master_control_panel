@@ -33,7 +33,7 @@ from homelab_panel.auth import (
     set_cookie,
     verify_password,
 )
-from homelab_panel.collect import collect_snapshot
+from homelab_panel.collect import collect_snapshot, cpu_usage
 from homelab_panel.config import ConfigError, load_config, save_password_hash
 from homelab_panel.guests import check_guests, reboot_required, run_guest, running_container, startup_commands, update_guest
 from homelab_panel.inventory import GUEST_ID, check_packages, wanted_ids
@@ -61,6 +61,7 @@ class Panel:
         self._lock = threading.Lock()
         self._at = 0.0
         self._state = None
+        self._cpu_times = None
         self._release = None
         self._release_at = 0.0
         self._packages = None
@@ -96,6 +97,9 @@ class Panel:
                 snapshot["probes"] = self._probes
                 snapshot["operator"] = [{"text": line, "href": "/system"} for line in read_operator(self.config)]
                 built = build_state(self.config, snapshot)
+                cpu_times = (snapshot.get("host") or {}).get("cpu_times")
+                built["health"]["cpu_usage"] = cpu_usage(self._cpu_times, cpu_times)
+                self._cpu_times = cpu_times
                 self._apply_release(built, info)
                 self._apply_packages(built)
                 self._apply_guest_updates(built)

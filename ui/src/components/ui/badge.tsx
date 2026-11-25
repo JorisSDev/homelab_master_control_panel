@@ -3,16 +3,16 @@ import { cn } from "@/lib/utils";
 
 export function toneOf(value: string) {
   const tone = value.toLowerCase();
-  if (tone.includes("down") || tone.includes("stop") || tone === "low" || tone.includes("different")) {
+  if (["down", "stopped", "low", "issue", "different disk", "failed"].includes(tone)) {
     return "down";
   }
-  if (tone.includes("attention") || tone.includes("drift") || tone === "unknown") {
+  if (tone.includes("attention") || tone.includes("drift") || tone === "review" || tone === "incomplete") {
     return "attention";
   }
-  if (tone.includes("run")) {
+  if (tone.includes("running") && tone !== "running") {
     return "running";
   }
-  return "up";
+  return ["up", "running", "completed", "passed", "ready"].includes(tone) ? "up" : "neutral";
 }
 
 export function Badge({ value, className, ...props }: HTMLAttributes<HTMLSpanElement> & { value: string }) {

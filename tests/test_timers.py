@@ -38,4 +38,4 @@ class TimerTests(unittest.TestCase):
 
     def test_format_uses_local_calendar_fields(self):
         moment = datetime.datetime(2026, 1, 4, 6, 0, tzinfo=datetime.datetime.now().astimezone().tzinfo)
-        self.assertIn("04 Jan 06:00", format_when(moment, "not scheduled"))
+        self.assertEqual(format_when(moment, "not scheduled"), "2026-01-04 06:00")

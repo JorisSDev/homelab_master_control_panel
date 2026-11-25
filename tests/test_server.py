@@ -39,6 +39,24 @@ class BindTests(unittest.TestCase):
 
 
 class ApiTests(unittest.TestCase):
+    def test_cpu_usage_uses_fresh_samples_and_recovers_after_missing_data(self):
+        samples = iter([
+            (100, 0, 100, 800, 0, 0, 0, 0),
+            (120, 0, 110, 860, 10, 0, 0, 0),
+            None,
+            (140, 0, 120, 920, 20, 0, 0, 0),
+            (140, 0, 120, 1020, 20, 0, 0, 0),
+        ])
+        panel = Panel({}, lambda: {"host": {"cpu_times": next(samples)}}, None)
+        with mock.patch("homelab_panel.server.time.monotonic", side_effect=[100, 101, 110, 120, 130, 140]):
+            first = panel.state()
+            self.assertIsNone(first["health"]["cpu_usage"])
+            self.assertIs(panel.state(), first)
+            self.assertEqual(panel.state()["health"]["cpu_usage"], 30.0)
+            self.assertIsNone(panel.state()["health"]["cpu_usage"])
+            self.assertIsNone(panel.state()["health"]["cpu_usage"])
+            self.assertEqual(panel.state()["health"]["cpu_usage"], 0.0)
+
     def test_get_returns_json_post_is_refused_and_the_cache_holds(self):
         calls = {"n": 0}
 

@@ -9,3 +9,5 @@ dist/
 .env
 .cursor/
 .panel-state/
+/AGENTS.md
+/.project-private/

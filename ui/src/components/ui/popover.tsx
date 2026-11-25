@@ -17,7 +17,7 @@ export function PopoverContent({ className, align = "start", sideOffset = 6, ...
         align={align}
         sideOffset={sideOffset}
         className={cn(
-          "z-20 w-[min(22rem,calc(100vw-2rem))] border border-[var(--line)] bg-[var(--paper)] p-3 shadow-[0_16px_40px_rgba(0,0,0,0.45)]",
+          "popover-surface",
           className,
         )}
         {...props}

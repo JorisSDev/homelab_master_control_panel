@@ -15,6 +15,7 @@ export type TimerRow = {
 
 export type Run = {
   heading: string;
+  started_at?: string;
   ok: boolean;
   result: string;
   steps: string[];
@@ -67,6 +68,7 @@ export type ServiceRow = {
 export type StorageRow = {
   label: string;
   kind: string;
+  used?: string;
   free: string;
   total: string;
   status: string;
@@ -118,6 +120,7 @@ export type GuestUpdates = {
 };
 
 export type ViewState = {
+  observed_at?: string;
   refresh_seconds: number;
   update: JobView;
   scan: JobView;
@@ -127,8 +130,10 @@ export type ViewState = {
     summary: string;
     load: string;
     cores?: number;
+    cpu_usage?: number | null;
     memory_used: string;
     memory_total: string;
+    disk_used?: string;
     disk_free: string;
     disk_total: string;
     disk_check: { next: string; last: string };

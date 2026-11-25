@@ -252,15 +252,16 @@ def read_mounts(reader=read_text, disk=shutil.disk_usage):
             continue
         if item["mount"] != "/" and usage.total < 1024 ** 3:
             continue
-        rows.append({"mount": item["mount"], "fstype": item["fstype"], "free": usage.free, "total": usage.total})
+        rows.append({
+            "mount": item["mount"], "fstype": item["fstype"],
+            "used": usage.used, "free": usage.free, "total": usage.total,
+        })
     return rows
 
 
 def read_host(reader=read_text):
     cores = _core_count(reader("/proc/cpuinfo"))
     meminfo = reader("/proc/meminfo")
-    if not meminfo.strip():
-        return {"load": "", "cores": cores, "memory_used": 0, "memory_total": 0, "disk_free": 0, "disk_total": 0}
     load_text = reader("/proc/loadavg")
     load_parts = load_text.split()
     load = load_parts[0] if load_parts else ""
@@ -273,8 +274,8 @@ def read_host(reader=read_text):
         if parts and parts[0].isdigit():
             memory[key.strip()] = int(parts[0]) * 1024
     total = memory.get("MemTotal", 0)
-    available = memory.get("MemAvailable", 0)
-    used = max(total - available, 0) if total else 0
+    available = memory.get("MemAvailable")
+    used = max(total - available, 0) if total and available is not None else None
     try:
         usage = shutil.disk_usage("/")
     except OSError:
@@ -282,8 +283,10 @@ def read_host(reader=read_text):
     return {
         "load": load,
         "cores": cores,
+        "cpu_times": _cpu_times(reader("/proc/stat")),
         "memory_used": used,
         "memory_total": total,
+        "disk_used": None if usage is None else usage.used,
         "disk_free": 0 if usage is None else usage.free,
         "disk_total": 0 if usage is None else usage.total,
     }
@@ -291,6 +294,24 @@ def read_host(reader=read_text):
 
 def _core_count(text):
     return sum(1 for line in (text or "").splitlines() if line.lower().startswith("processor"))
+
+
+def _cpu_times(text):
+    line = text.partition("\n")[0].split()
+    counters = line[1:9]
+    if line[:1] != ["cpu"] or len(counters) != 8 or not all(value.isdecimal() for value in counters):
+        return None
+    return tuple(map(int, counters))
+
+
+def cpu_usage(previous, current):
+    if previous is None or current is None:
+        return None
+    deltas = [after - before for before, after in zip(previous, current)]
+    if len(deltas) != 8 or min(deltas) < 0 or not sum(deltas):
+        return None
+    user, nice, system, _idle, _iowait, irq, softirq, _steal = deltas
+    return round(100 * (user + nice + system + irq + softirq) / sum(deltas), 1)
 
 
 def _service(runner, unit):

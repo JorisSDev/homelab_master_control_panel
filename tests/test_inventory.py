@@ -14,6 +14,7 @@ class InventoryTests(unittest.TestCase):
         text = "Name Type Status Total Used Available %\nguests zfspool active 1000 400 600 40.00%\n"
         rows = parse_pvesm(text)
         self.assertEqual(rows[0]["label"], "guests")
+        self.assertEqual(rows[0]["used"], 400 * 1024)
         self.assertEqual(rows[0]["free"], 600 * 1024)
 
     def test_simulation_counts_security_and_never_installs(self):
